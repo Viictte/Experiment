@@ -57,6 +57,16 @@ class RedisService:
         key = self._make_key('answer', {'prompt': prompt, 'citations': citations})
         self.set(key, answer)
     
+    def get_tool_cache(self, tool_name: str, params: dict) -> Optional[Any]:
+        """Get cached tool output (for weather, finance, transport)"""
+        key = self._make_key(f'tool:{tool_name}', params)
+        return self.get(key)
+    
+    def set_tool_cache(self, tool_name: str, params: dict, result: Any, ttl: int = 300):
+        """Cache tool output with shorter TTL (default 5 minutes for time-sensitive data)"""
+        key = self._make_key(f'tool:{tool_name}', params)
+        self.set(key, result, ttl=ttl)
+    
     def clear_all(self):
         self.client.flushdb()
 

@@ -57,12 +57,27 @@ redis:
 credibility_priors:
   default: 0.5
   domains:
+    # Official Hong Kong government and public services
+    gov.hk: 0.99
+    hko.gov.hk: 0.99
+    hkpl.gov.hk: 0.99
+    td.gov.hk: 0.99
+    info.gov.hk: 0.99
+    # Technical documentation
     docs.python.org: 0.95
     github.com: 0.85
     stackoverflow.com: 0.80
     wikipedia.org: 0.75
-    medium.com: 0.60
-    reddit.com: 0.50
+    # News and media
+    scmp.com: 0.70
+    reuters.com: 0.85
+    bloomberg.com: 0.85
+    # Blogs and forums (lower priority)
+    medium.com: 0.40
+    reddit.com: 0.20
+    facebook.com: 0.20
+    youtube.com: 0.30
+    quora.com: 0.30
 
 tools:
   weather:

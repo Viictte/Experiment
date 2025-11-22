@@ -76,6 +76,9 @@ class RAGWorkflow:
         
         report_progress("Analyzing query...")
         
+        # Perform query analysis for better domain detection and location extraction
+        query_analysis = self.llm_router.analyze_query(query)
+        
         if not strict_local and self.simple_detector.is_simple(query):
             report_progress("Generating answer (fast path)...")
             language = self.simple_detector.detect_language(query)
@@ -99,7 +102,8 @@ class RAGWorkflow:
                 'citations': [],
                 'latency_ms': latency_ms,
                 'timestamp': end_time.isoformat(),
-                'fast_path': True
+                'fast_path': True,
+                'query_analysis': query_analysis
             }
         
         report_progress("Routing query...")
@@ -137,7 +141,20 @@ class RAGWorkflow:
             
             if 'finance' in sources:
                 report_progress("Fetching finance data...")
-                finance_results = self._handle_finance(query)
+                
+                # Check cache first for consistency
+                from rag_system.services.redis_service import get_redis_service
+                redis = get_redis_service()
+                cache_params = {'query': query, 'tool': 'finance'}
+                cached_result = redis.get_tool_cache('finance', cache_params)
+                
+                if cached_result:
+                    finance_results = cached_result
+                else:
+                    finance_results = self._handle_finance(query)
+                    # Cache for 5 minutes (300 seconds)
+                    redis.set_tool_cache('finance', cache_params, finance_results, ttl=300)
+                
                 tool_results['finance'] = finance_results
                 domain_tools_used.append('finance')
                 if 'data' in finance_results and finance_results['data']:
@@ -164,7 +181,23 @@ class RAGWorkflow:
             
             if 'weather' in sources:
                 report_progress("Fetching weather data...")
-                weather_results = self._handle_weather(query)
+                
+                # Use location from query analysis if available
+                location = query_analysis.get('location', '')
+                
+                # Check cache first for consistency
+                from rag_system.services.redis_service import get_redis_service
+                redis = get_redis_service()
+                cache_params = {'query': query, 'location': location, 'tool': 'weather'}
+                cached_result = redis.get_tool_cache('weather', cache_params)
+                
+                if cached_result:
+                    weather_results = cached_result
+                else:
+                    weather_results = self._handle_weather(query, location=location)
+                    # Cache for 10 minutes (600 seconds) - weather changes slowly
+                    redis.set_tool_cache('weather', cache_params, weather_results, ttl=600)
+                
                 tool_results['weather'] = weather_results
                 domain_tools_used.append('weather')
                 if 'data' in weather_results and weather_results['data']:
@@ -179,7 +212,20 @@ class RAGWorkflow:
             
             if 'transport' in sources:
                 report_progress("Fetching transport data...")
-                transport_results = self._handle_transport(query)
+                
+                # Check cache first for consistency
+                from rag_system.services.redis_service import get_redis_service
+                redis = get_redis_service()
+                cache_params = {'query': query, 'tool': 'transport'}
+                cached_result = redis.get_tool_cache('transport', cache_params)
+                
+                if cached_result:
+                    transport_results = cached_result
+                else:
+                    transport_results = self._handle_transport(query)
+                    # Cache for 15 minutes (900 seconds) - routes change less frequently
+                    redis.set_tool_cache('transport', cache_params, transport_results, ttl=900)
+                
                 tool_results['transport'] = transport_results
                 domain_tools_used.append('transport')
                 if 'data' in transport_results and transport_results['data']:
@@ -210,18 +256,42 @@ class RAGWorkflow:
             
             if should_use_web_search and not fast_mode:
                 report_progress("Searching the web...")
-                web_query = self._enhance_query_for_web_search(query, domain_tools_used)
-                web_results = self.web_search_tool.search(web_query, max_results=5)
+                
+                # Use query expansions from analysis for better recall
+                query_expansions = query_analysis.get('query_expansions', [query])
+                search_query = query_expansions[0] if query_expansions else query
+                
+                # Apply domain filtering based on query analysis
+                filters = None
+                domain = query_analysis.get('domain', 'general')
+                location = query_analysis.get('location', '')
+                
+                # For HK-specific queries, prefer HK domains
+                if location and 'hong kong' in location.lower():
+                    filters = {
+                        'preferred_domains': ['gov.hk', 'hkpl.gov.hk', 'hko.gov.hk', 'td.gov.hk', 'info.gov.hk'],
+                        'blocked_domains': []
+                    }
+                
+                # Block low-quality sources for factual queries
+                if domain in ['weather', 'finance', 'hk_local']:
+                    if filters is None:
+                        filters = {'preferred_domains': [], 'blocked_domains': []}
+                    filters['blocked_domains'].extend(['reddit.com', 'facebook.com', 'quora.com'])
+                
+                web_results = self.web_search_tool.search(search_query, max_results=5, filters=filters)
                 if 'results' in web_results:
                     for result in web_results['results']:
                         # Handle both Google (uses 'url') and Tavily (uses 'url') formats
                         url = result.get('url', result.get('link', ''))
                         title = result.get('title', '')
+                        domain_str = result.get('domain', '')
                         all_context.append({
                             'text': result.get('content', result.get('snippet', '')),
                             'source': 'web_search',
                             'url': url,
                             'title': title,
+                            'domain': domain_str,
                             'credibility_score': 0.6,
                             'final_score': 0.7
                         })
@@ -231,8 +301,47 @@ class RAGWorkflow:
         
         citations = self._build_citations(all_context)
         
+        # Check if we have meaningful context before generating answer
+        has_context = self._has_meaningful_context(all_context)
+        
+        if not has_context:
+            # Unified fallback message instead of random LLM behavior
+            answer = (
+                "I don't know based on the available information. "
+                "The current data sources do not provide a reliable answer to this question."
+            )
+            end_time = datetime.now()
+            latency_ms = (end_time - start_time).total_seconds() * 1000
+            
+            return {
+                'query': query,
+                'answer': answer,
+                'routing': routing,
+                'sources_used': [],
+                'tool_results': tool_results,
+                'failed_tools': failed_tools,
+                'context_count': 0,
+                'citations': [],
+                'latency_ms': latency_ms,
+                'timestamp': end_time.isoformat(),
+                'answerability': 'insufficient_context'
+            }
+        
         report_progress("Generating answer...")
-        answer = self.llm_router.synthesize_answer(query, all_context[:10], citations)
+        
+        # Determine if we should use strict grounding based on sources
+        # Use strict grounding for factual/time-sensitive queries (weather, finance, transport, web search)
+        use_strict_grounding = any(
+            source in sources for source in ['weather', 'finance', 'transport', 'web_search']
+        )
+        
+        answer = self.llm_router.synthesize_answer(
+            query, 
+            all_context[:10], 
+            citations,
+            allow_direct_knowledge=False,
+            strict_grounding=use_strict_grounding
+        )
         
         end_time = datetime.now()
         latency_ms = (end_time - start_time).total_seconds() * 1000
@@ -250,7 +359,8 @@ class RAGWorkflow:
             'context_count': len(all_context),
             'citations': citations,
             'latency_ms': latency_ms,
-            'timestamp': end_time.isoformat()
+            'timestamp': end_time.isoformat(),
+            'query_analysis': query_analysis
         }
     
     def _handle_finance(self, query: str) -> Dict[str, Any]:
@@ -267,12 +377,17 @@ class RAGWorkflow:
         else:
             return self.finance_tool.compare_stocks(tickers)
     
-    def _handle_weather(self, query: str) -> Dict[str, Any]:
-        location = self._extract_location(query)
+    def _handle_weather(self, query: str, location: str = '') -> Dict[str, Any]:
+        # Use provided location from query analysis, or extract from query
+        if not location:
+            location = self._extract_location(query)
+        
         date = self._extract_date(query)
         
+        # If still no location, return error instead of defaulting to New York
+        # This prevents wrong-city responses
         if not location:
-            location = "New York"
+            return {'error': 'No location specified in query'}
         
         return self.weather_tool.get_weather(location, date)
     
@@ -366,6 +481,26 @@ class RAGWorkflow:
             return None
         except Exception:
             return None
+    
+    def _has_meaningful_context(self, context: List[Dict[str, Any]]) -> bool:
+        """Check if we have meaningful context to answer the query"""
+        if not context:
+            return False
+        
+        # Heuristic: any doc from trusted tools or with a decent score
+        for doc in context:
+            source = doc.get('source', '')
+            
+            # Trust structured tool outputs
+            if source in {'weather', 'finance', 'transport', 'finance_web_extraction'}:
+                return True
+            
+            # Check if we have a good score from retrieval/reranking
+            score = doc.get('final_score') or doc.get('score') or doc.get('credibility_score')
+            if score is not None and score >= 0.5:
+                return True
+        
+        return False
     
     def _build_citations(self, context: List[Dict[str, Any]]) -> List[str]:
         citations = []

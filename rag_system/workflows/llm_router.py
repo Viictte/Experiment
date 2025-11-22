@@ -23,6 +23,96 @@ class LLMRouter:
         self.temperature = self.config.get('llm.temperature', 0.7)
         self.max_tokens = self.config.get('llm.max_tokens', 2000)
     
+    def analyze_query(self, query: str) -> Dict[str, Any]:
+        """Analyze query to extract domain, location, entities, and generate expansions"""
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "analyze_query",
+                    "description": "Analyze the query to extract structured information",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "domain": {
+                                "type": "string",
+                                "enum": ["weather", "finance", "transport", "hk_local", "cuisine", "history", "general"],
+                                "description": "Primary domain of the query"
+                            },
+                            "location": {
+                                "type": "string",
+                                "description": "Geographic location mentioned (normalized, e.g., 'Hong Kong', 'Beijing', 'New York'). Empty if no location."
+                            },
+                            "entities": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Key entities mentioned (companies, places, people, etc.)"
+                            },
+                            "query_expansions": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "2-3 semantically expanded versions of the query for better recall"
+                            },
+                            "language": {
+                                "type": "string",
+                                "enum": ["en", "zh", "mixed"],
+                                "description": "Primary language of the query"
+                            }
+                        },
+                        "required": ["domain", "location", "entities", "query_expansions", "language"]
+                    }
+                }
+            }
+        ]
+        
+        system_prompt = """You are a query analysis expert that extracts structured information from user queries.
+
+Your task is to analyze the query and extract:
+1. **Domain**: Primary topic area (weather, finance, transport, hk_local, cuisine, history, general)
+2. **Location**: Geographic location if mentioned (normalize to standard names like "Hong Kong", "Beijing", "New York")
+3. **Entities**: Key entities (companies, places, people, organizations)
+4. **Query Expansions**: 2-3 semantically similar versions of the query for better search recall
+5. **Language**: Primary language (en=English, zh=Chinese, mixed=both)
+
+Examples:
+- "What's the weather forecast for Hong Kong this afternoon?" → domain=weather, location="Hong Kong", entities=["Hong Kong"], expansions=["Hong Kong weather forecast today afternoon", "Hong Kong weather this afternoon", "weather forecast Hong Kong today"]
+- "香港圖書館證怎麼辦理？" → domain=hk_local, location="Hong Kong", entities=["Hong Kong Public Library", "library card"], expansions=["Hong Kong library card application", "HKPL borrower registration", "how to apply Hong Kong library card"]
+- "What is the temperature in Beijing right now?" → domain=weather, location="Beijing", entities=["Beijing"], expansions=["Beijing current temperature", "Beijing weather now", "temperature Beijing today"]
+
+Be precise with location extraction and normalization."""
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": query}
+                ],
+                tools=tools,
+                tool_choice={"type": "function", "function": {"name": "analyze_query"}},
+                temperature=0.3
+            )
+            
+            tool_call = response.choices[0].message.tool_calls[0]
+            arguments = json.loads(tool_call.function.arguments)
+            
+            return {
+                'domain': arguments.get('domain', 'general'),
+                'location': arguments.get('location', ''),
+                'entities': arguments.get('entities', []),
+                'query_expansions': arguments.get('query_expansions', [query]),
+                'language': arguments.get('language', 'en')
+            }
+        except Exception as e:
+            return {
+                'domain': 'general',
+                'location': '',
+                'entities': [],
+                'query_expansions': [query],
+                'language': 'en',
+                'error': str(e)
+            }
+    
     def route_query(self, query: str) -> Dict[str, Any]:
         tools = [
             {
@@ -179,11 +269,11 @@ Provide your answer now:"""
         except Exception as e:
             return f"Error generating answer: {str(e)}"
     
-    def synthesize_answer(self, query: str, context: List[Dict[str, Any]], citations: List[str], allow_direct_knowledge: bool = False) -> str:
+    def synthesize_answer(self, query: str, context: List[Dict[str, Any]], citations: List[str], allow_direct_knowledge: bool = False, strict_grounding: bool = False) -> str:
         if not context:
             if allow_direct_knowledge:
                 return self.answer_direct(query)
-            return "I couldn't find relevant information to answer your query. Please try rephrasing your question or check if the required data sources are available."
+            return "I don't know based on the available information. The current data sources do not provide a reliable answer to this question."
         
         # Check cache first
         from rag_system.services.redis_service import get_redis_service
@@ -198,30 +288,53 @@ Provide your answer now:"""
             for i, doc in enumerate(context)
         ])
         
-        system_prompt = """You are a highly capable AI assistant powered by DeepSeek that provides accurate, well-cited answers by intelligently synthesizing information from multiple sources.
+        # Use strict grounding for factual/time-sensitive queries
+        if strict_grounding:
+            system_prompt = """You are a retrieval-augmented assistant that provides accurate answers based strictly on provided context.
+
+Core Rules:
+- You MUST base your answer ONLY on the provided CONTEXT and TOOL RESULTS
+- If the answer is not clearly supported by the context, you MUST say: "I don't know based on the available information."
+- Do NOT invent numbers, dates, times, temperatures, prices, or any factual data
+- Do NOT rely on your own prior knowledge for factual or time-sensitive queries
+- Use the context snippets and tool outputs as the single source of truth
+- If multiple snippets disagree, state the uncertainty or range instead of choosing arbitrarily
+- Cite sources using [1], [2], etc. for all factual claims
+- Respond in the same language as the query (English query → English answer, Chinese query → Traditional Chinese answer)"""
+
+            user_prompt = f"""QUESTION:
+{query}
+
+CONTEXT (snippets and tool outputs):
+{context_text}
+
+TASK:
+Answer the question using ONLY the information in the context above.
+If the context does not contain sufficient information to answer reliably, respond with:
+"I don't know based on the available information."
+
+Provide your answer now:"""
+        else:
+            # Permissive mode for general knowledge questions
+            system_prompt = """You are a highly capable AI assistant powered by DeepSeek that provides accurate, well-cited answers by intelligently synthesizing information from multiple sources.
 
 Core Capabilities:
 - Extract and synthesize information from diverse sources (APIs, web search, knowledge bases)
 - Cross-reference data across sources to provide comprehensive answers
 - Identify and reconcile conflicting information by prioritizing recency and credibility
-- Fill gaps in structured data by extracting from unstructured web content
 - Use your extensive knowledge to answer questions when context is limited
 
 Guidelines:
-- NEVER say "the context does not contain", "I cannot answer", or similar negative statements
-- ALWAYS provide the best answer using: (1) context provided, (2) your knowledge, (3) logical reasoning
 - For general knowledge questions (math, science, history, geography): use your knowledge directly
 - For real-time data (weather, stock prices, news): prioritize context from APIs and web search
 - Synthesize information from ALL sources (finance APIs, web search results, knowledge base, your knowledge)
-- For finance queries: extract prices, changes, percentages, timestamps from ANY available source; prioritize pre-market/post-market data when available
-- For incomplete API data: supplement with information from web search results
 - Cite sources using [1], [2], etc. when facts come from context; no citation needed for general knowledge
 - When multiple sources provide data, cross-check and use the most recent/credible
 - Be comprehensive and actionable - provide specific numbers, dates, and facts
 - Use clear, professional language with specific details
 - IMPORTANT: Match the language of the query - respond in English for English queries, Traditional Chinese for Chinese queries"""
 
-        user_prompt = f"""Query: {query}
+            user_prompt = f"""Query: {query}
 
 Context:
 {context_text}
@@ -230,10 +343,8 @@ Task: Provide a comprehensive, well-cited answer by:
 1. IMPORTANT: Respond in the SAME LANGUAGE as the query (English query → English answer, Chinese query → Traditional Chinese answer)
 2. If this is a general knowledge question (math, science, history, geography, language): use your knowledge to answer directly and accurately
 3. If this is a real-time data question (weather, stock prices, news): extract ALL relevant information from the context (API data, web snippets)
-4. For finance queries: identify prices, changes, percentages, timestamps, market state (pre/post/regular market); prioritize the most recent data
-5. Cross-reference multiple sources and prioritize the most recent timestamp
-6. Provide specific numbers, dates, and facts with citations [1], [2] for context sources
-7. If context is empty or irrelevant but you know the answer: provide it using your knowledge
+4. Cross-reference multiple sources and prioritize the most recent timestamp
+5. Provide specific numbers, dates, and facts with citations [1], [2] for context sources
 
 Provide your answer now:"""
 

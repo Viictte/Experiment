@@ -1,9 +1,10 @@
-"""Web search tool with Google Custom Search and Tavily API support"""
+"""Web search tool with Google Custom Search and domain filtering"""
 
 from typing import Dict, Any, List, Optional
 import requests
 from rag_system.core.config import get_config
 import os
+from urllib.parse import urlparse
 
 class WebSearchTool:
     def __init__(self):
@@ -18,7 +19,18 @@ class WebSearchTool:
         else:
             self.provider = None
     
-    def search(self, query: str, max_results: int = 5) -> Dict[str, Any]:
+    def search(self, query: str, max_results: int = 5, filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Search the web with optional domain filtering.
+        
+        Args:
+            query: Search query
+            max_results: Maximum number of results to return
+            filters: Optional dict with keys:
+                - must_domains: List of domains that results MUST come from
+                - preferred_domains: List of domains to prioritize in ranking
+                - blocked_domains: List of domains to exclude from results
+        """
         if not self.enabled:
             return {'error': 'Web search tool is disabled'}
         
@@ -29,9 +41,16 @@ class WebSearchTool:
                 'error': 'No web search provider configured. Set GOOGLE_API_KEY + GOOGLE_CSE_ID.'
             }
         
-        return self._search_google(query, max_results)
+        return self._search_google(query, max_results, filters)
     
-    def _search_google(self, query: str, max_results: int = 5) -> Dict[str, Any]:
+    def _domain_of(self, url: str) -> str:
+        """Extract domain from URL"""
+        try:
+            return urlparse(url).netloc.lower()
+        except Exception:
+            return ""
+    
+    def _search_google(self, query: str, max_results: int = 5, filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         try:
             url = "https://www.googleapis.com/customsearch/v1"
             params = {
@@ -48,12 +67,19 @@ class WebSearchTool:
             
             results = []
             for item in data.get('items', []):
+                url_str = item.get('link', '')
+                domain = self._domain_of(url_str)
                 results.append({
                     'title': item.get('title', ''),
-                    'url': item.get('link', ''),
+                    'url': url_str,
+                    'domain': domain,
                     'content': item.get('snippet', ''),
                     'snippet': item.get('snippet', '')
                 })
+            
+            # Apply filters if provided
+            if filters:
+                results = self._apply_filters(results, filters)
             
             return {
                 'query': query,
@@ -62,6 +88,42 @@ class WebSearchTool:
             }
         except Exception as e:
             return {'error': str(e), 'query': query, 'results': []}
+    
+    def _apply_filters(self, results: List[Dict[str, Any]], filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Apply domain filters to search results"""
+        must_domains = set(d.lower() for d in filters.get('must_domains', []) if d)
+        blocked_domains = set(d.lower() for d in filters.get('blocked_domains', []) if d)
+        preferred_domains = set(d.lower() for d in filters.get('preferred_domains', []) if d)
+        
+        # Filter out blocked domains and enforce must_domains
+        filtered = []
+        for result in results:
+            domain = result.get('domain', '')
+            
+            # Block unwanted domains
+            if blocked_domains and any(domain.endswith(b) or b in domain for b in blocked_domains):
+                continue
+            
+            # Enforce must_domains if specified
+            if must_domains and not any(domain.endswith(m) or m in domain for m in must_domains):
+                continue
+            
+            filtered.append(result)
+        
+        if not filtered:
+            # If filtering removed everything, return original results
+            # (better to have some results than none)
+            filtered = results
+        
+        # Reorder to prioritize preferred domains
+        if preferred_domains:
+            filtered.sort(
+                key=lambda r: (
+                    0 if any(r.get('domain', '').endswith(p) or p in r.get('domain', '') for p in preferred_domains) else 1
+                )
+            )
+        
+        return filtered
     
 _web_search_tool = None
 
