@@ -4,6 +4,8 @@ import warnings
 import logging
 import click
 import json
+import os
+import traceback
 from pathlib import Path
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
@@ -97,6 +99,8 @@ def ask(query, strict_local, fast, output_json, no_progress, files):
                 for citation in result['citations']:
                     click.echo(f"  {citation}")
     except Exception as e:
+        if os.getenv("RAG_DEBUG") == "1":
+            traceback.print_exc()
         click.echo(f"✗ Error: {str(e)}", err=True)
 
 @cli.group()
