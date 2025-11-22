@@ -433,7 +433,7 @@ function App() {
                 )}
 
                 {activeTab === 'kb' && (
-                  <div className="mt-4 space-y-4">
+                  <div className="mt-4 space-y-4 overflow-y-auto max-h-[500px]">
                     <div>
                       <h3 className="text-sm font-semibold mb-2">Statistics</h3>
                       {kbStats && (
@@ -471,7 +471,13 @@ function App() {
                     {messages.map((message, index) => (
                       <div key={index} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                         <div className={`max-w-[85%] rounded-lg p-4 ${message.role === 'user' ? 'bg-blue-600 text-white' : 'bg-white border border-slate-200'}`}>
-                          <p className="whitespace-pre-wrap">{message.content}</p>
+                          {message.role === 'user' ? (
+                            <p className="whitespace-pre-wrap">{message.content}</p>
+                          ) : (
+                            <div className="prose prose-sm max-w-none">
+                              <ReactMarkdown>{message.content}</ReactMarkdown>
+                            </div>
+                          )}
 
                           {message.role === 'assistant' && (
                             <div className="mt-3 space-y-2">
@@ -496,14 +502,14 @@ function App() {
                                 </div>
                               )}
 
-                              {message.citations && message.citations.length > 0 && (
-                                <div className="text-xs text-slate-600 space-y-1 border-t pt-2">
-                                  <p className="font-medium">Citations:</p>
-                                  {message.citations.map((citation, i) => (
-                                    <p key={i} className="pl-2">{citation}</p>
-                                  ))}
-                                </div>
-                              )}
+                                              {message.citations && message.citations.length > 0 && (
+                                                <div className="text-xs text-slate-600 space-y-1 border-t pt-2">
+                                                  <p className="font-medium">Citations:</p>
+                                                  {message.citations.map((citation, i) => (
+                                                    <p key={i} className="pl-2 break-words overflow-wrap-anywhere">{citation}</p>
+                                                  ))}
+                                                </div>
+                                              )}
 
                               <div className="flex items-center gap-3 text-xs text-slate-500 border-t pt-2">
                                 {message.latency_ms && <span>{(message.latency_ms / 1000).toFixed(2)}s</span>}

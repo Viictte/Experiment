@@ -82,7 +82,8 @@ async def ask(request: AskRequest):
         result = rag_workflow.execute(
             query=request.query,
             strict_local=request.strict_local,
-            fast_mode=request.fast
+            fast_mode=request.fast,
+            allow_web_search=request.web_search
         )
         return result
     except Exception as e:

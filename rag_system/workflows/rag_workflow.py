@@ -82,7 +82,7 @@ class RAGWorkflow:
         
         return time_context
     
-    def execute(self, query: str, strict_local: bool = False, fast_mode: bool = False, files: Optional[List[str]] = None, progress_callback: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
+    def execute(self, query: str, strict_local: bool = False, fast_mode: bool = False, allow_web_search: bool = True, files: Optional[List[str]] = None, progress_callback: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
         start_time = datetime.now()
         
         def report_progress(stage: str):
@@ -188,6 +188,34 @@ class RAGWorkflow:
             routing = self.llm_router.route_query(query)
         
         sources = routing['sources']
+        
+        # Add keyword-based fallback routing for transport/finance queries
+        # This ensures these APIs are called even if LLM router misses them
+        query_lower = query.lower()
+        
+        # Transport keywords
+        transport_keywords = [
+            'how do i go', 'how to go', 'how do i get', 'how to get', 'travel from', 'travel to',
+            'go from', 'go to', 'route from', 'route to', 'directions', 'fastest way',
+            'bus', 'mtr', 'train', 'taxi', 'transport', 'commute',
+            '怎麼去', '怎么去', '如何去', '怎樣去', '怎样去', '路線', '路线', '交通'
+        ]
+        if any(kw in query_lower for kw in transport_keywords) and 'transport' not in sources:
+            # Check if query mentions two locations (origin and destination)
+            locations = self._extract_locations(query)
+            if len(locations) >= 2:
+                sources.append('transport')
+                routing['reasoning'] += ' (transport added via keyword detection)'
+        
+        # Finance keywords
+        finance_keywords = [
+            'stock', 'share', 'price of', 'stock price', 'market', 'ticker',
+            'hkd', 'usd', 'exchange rate', 'currency', 'forex',
+            '股票', '股价', '股價', '市場', '市场', '匯率', '汇率', '價格', '价格'
+        ]
+        if any(kw in query_lower for kw in finance_keywords) and 'finance' not in sources:
+            sources.append('finance')
+            routing['reasoning'] += ' (finance added via keyword detection)'
         
         all_context = []
         tool_results = {}
@@ -337,17 +365,27 @@ class RAGWorkflow:
                 for doc in all_context
             )
             
+            # Check if query needs extra info beyond domain tools (AQHI, hiking trails, etc.)
+            needs_extra_info = any(kw in query.lower() for kw in [
+                'aqhi', 'air quality', '空氣質素', '空气质素',
+                'trail', 'hiking', '遠足', '远足', '行山', 'route', '路線', '路线'
+            ])
+            
             # Only use web search when:
-            # 1. Router explicitly requested it, OR
-            # 2. Domain tools failed (need fallback), OR
-            # 3. KB is insufficient AND we don't have domain context
+            # 1. User allows web search (allow_web_search=True), AND
+            # 2. One of these conditions:
+            #    a. Router explicitly requested it, OR
+            #    b. Domain tools failed (need fallback), OR
+            #    c. KB is insufficient AND we don't have domain context, OR
+            #    d. Query needs extra info beyond what domain tools provide
             should_use_web_search = (
                 'web_search' in sources or
                 len(failed_tools) > 0 or
-                (kb_docs_count < min_kb_threshold and not has_domain_context)
+                (kb_docs_count < min_kb_threshold and not has_domain_context) or
+                needs_extra_info
             )
             
-            if should_use_web_search and not fast_mode:
+            if allow_web_search and should_use_web_search and not fast_mode:
                 report_progress("Searching the web...")
                 
                 # Use query expansions from analysis for better recall
