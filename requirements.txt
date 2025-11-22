@@ -4,7 +4,7 @@ pyyaml==6.0.1
 click==8.1.7
 
 # LLM & Embeddings
-openai==1.12.0
+openai==2.8.1
 sentence-transformers==2.3.1
 torch>=2.2.0
 transformers==4.37.2

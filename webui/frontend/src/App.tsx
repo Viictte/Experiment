@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Send, Loader2, AlertCircle, CheckCircle2, Database, Globe, Zap } from 'lucide-react'
+import { Send, Loader2, AlertCircle, CheckCircle2, Database, Globe, Zap, RotateCcw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -103,6 +103,16 @@ function App() {
     return 'bg-orange-100 text-orange-800 border-orange-200'
   }
 
+  const handleNewChat = () => {
+    setMessages([])
+    setError(null)
+    // Re-fetch system status
+    fetch(`${API_URL}/api/status`)
+      .then(res => res.json())
+      .then(setSystemStatus)
+      .catch(() => setSystemStatus(null))
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
       {/* Header */}
@@ -113,15 +123,30 @@ function App() {
             <p className="text-sm text-slate-600">Intelligent Question Answering</p>
           </div>
           
-          {/* System Status */}
-          {systemStatus && (
-            <div className="flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full ${systemStatus.overall ? 'bg-green-500' : 'bg-red-500'}`} />
-              <span className="text-sm text-slate-600">
-                {systemStatus.overall ? 'All Systems Operational' : 'System Issues Detected'}
-              </span>
-            </div>
-          )}
+          <div className="flex items-center gap-4">
+            {/* New Chat Button */}
+            {messages.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleNewChat}
+                className="flex items-center gap-2"
+              >
+                <RotateCcw className="w-4 h-4" />
+                New Chat
+              </Button>
+            )}
+            
+            {/* System Status */}
+            {systemStatus && (
+              <div className="flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full ${systemStatus.overall ? 'bg-green-500' : 'bg-red-500'}`} />
+                <span className="text-sm text-slate-600">
+                  {systemStatus.overall ? 'All Systems Operational' : 'System Issues Detected'}
+                </span>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
