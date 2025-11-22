@@ -1,0 +1,6 @@
+
+# WebUI
+webui/backend/.env
+webui/backend/app/__pycache__/
+webui/frontend/node_modules/
+webui/frontend/dist/
