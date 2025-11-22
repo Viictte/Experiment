@@ -320,11 +320,13 @@ class RAGWorkflow:
                 tool_results['transport'] = transport_results
                 domain_tools_used.append('transport')
                 if 'data' in transport_results and transport_results['data']:
+                    # Format transport data for context
+                    transport_text = self._format_transport_for_context(transport_results)
                     all_context.append({
-                        'text': str(transport_results),
+                        'text': transport_text,
                         'source': 'transport',
-                        'credibility_score': 0.8,
-                        'final_score': 0.75
+                        'credibility_score': 0.9,
+                        'final_score': 0.85
                     })
                 elif 'error' in transport_results:
                     failed_tools.append('transport')
@@ -499,12 +501,18 @@ class RAGWorkflow:
             return self.weather_tool.get_weather(location, date)
     
     def _handle_transport(self, query: str) -> Dict[str, Any]:
+        """Handle transport queries"""
         locations = self._extract_locations(query)
         
         if len(locations) < 2:
             return {'error': 'Need origin and destination for transport query'}
         
-        return self.transport_tool.get_route(locations[0], locations[1])
+        result = self.transport_tool.get_route(locations[0], locations[1], mode='transit')
+        
+        # Wrap in 'data' key for consistency with other tools
+        if 'error' not in result:
+            return {'data': result}
+        return result
     
     def _handle_time(self, query: str, location: str = '') -> Dict[str, Any]:
         """Handle time queries"""
@@ -724,6 +732,51 @@ class RAGWorkflow:
         lines.append(f"  Day of week: {time_results.get('day_of_week_name')}")
         lines.append(f"  Timezone: {timezone}")
         lines.append(f"  UTC offset: {time_results.get('utc_offset')}")
+        
+        return '\n'.join(lines)
+    
+    def _format_transport_for_context(self, transport_results: Dict[str, Any]) -> str:
+        """Format transport data in a structured, readable way for LLM context"""
+        data = transport_results.get('data', {})
+        lines = []
+        
+        origin = data.get('origin', 'Unknown')
+        destination = data.get('destination', 'Unknown')
+        
+        lines.append(f"Transport route from {origin} to {destination}:")
+        
+        route = data.get('route', {})
+        if route:
+            total_duration = route.get('total_duration_minutes', 0)
+            lines.append(f"  Total duration: {total_duration} minutes")
+            
+            departure_time = route.get('departure_time', '')
+            arrival_time = route.get('arrival_time', '')
+            if departure_time:
+                lines.append(f"  Departure: {departure_time}")
+            if arrival_time:
+                lines.append(f"  Arrival: {arrival_time}")
+            
+            steps = route.get('steps', [])
+            if steps:
+                lines.append(f"\n  Route steps ({len(steps)} segments):")
+                for i, step in enumerate(steps, 1):
+                    step_type = step.get('type', 'unknown')
+                    mode = step.get('mode', 'unknown')
+                    
+                    if step_type == 'transit':
+                        transit = step.get('transit', {})
+                        line = transit.get('line', 'N/A')
+                        headsign = transit.get('headsign', 'N/A')
+                        from_stop = step.get('from', 'N/A')
+                        to_stop = step.get('to', 'N/A')
+                        lines.append(f"    {i}. Take {mode} {line} (towards {headsign})")
+                        lines.append(f"       From: {from_stop}")
+                        lines.append(f"       To: {to_stop}")
+                    elif step_type == 'pedestrian':
+                        from_loc = step.get('from', 'N/A')
+                        to_loc = step.get('to', 'N/A')
+                        lines.append(f"    {i}. Walk from {from_loc} to {to_loc}")
         
         return '\n'.join(lines)
     
