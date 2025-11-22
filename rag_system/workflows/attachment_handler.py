@@ -289,23 +289,33 @@ class DocumentAttachmentHandler:
             return f"Error parsing HTML: {str(e)}", {'error': str(e)}
     
     def _parse_image(self, path: Path) -> tuple[str, Dict[str, Any]]:
-        """Parse image using OCR (if available)"""
+        """Parse image - return placeholder for vision analysis"""
+        # Note: DeepSeek vision API is not yet available through OpenAI-compatible interface
+        # For now, return a placeholder that indicates image needs manual analysis
+        # Future: Integrate vision API when available
+        
         try:
-            import pytesseract
             from PIL import Image
-            
             image = Image.open(path)
-            text = pytesseract.image_to_string(image)
-            text = self._normalize_whitespace(text)
+            width, height = image.size
+            format_name = image.format
             
-            if not text.strip():
-                return f"[Image: {path.name}] (No text detected via OCR)", {'type': 'image', 'ocr': 'no_text'}
+            metadata = {
+                'type': 'image',
+                'width': width,
+                'height': height,
+                'format': format_name,
+                'path': str(path)
+            }
             
-            metadata = {'type': 'image', 'ocr': 'success'}
+            # Return image metadata for now
+            # The RAG workflow can use web search to help answer image-related questions
+            content = f"[Image: {path.name}]\n"
+            content += f"Format: {format_name}\n"
+            content += f"Dimensions: {width}x{height}\n"
+            content += f"Note: This is an image file. To identify its content, please describe what you see or ask specific questions about it."
             
-            return f"[Image: {path.name}] (OCR extracted text):\n{text}", metadata
-        except ImportError:
-            return f"[Image: {path.name}] (OCR not available - tesseract not installed)", {'type': 'image', 'ocr': 'unavailable'}
+            return content, metadata
         except Exception as e:
             return f"[Image: {path.name}] Error: {str(e)}", {'type': 'image', 'error': str(e)}
     
