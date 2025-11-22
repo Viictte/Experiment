@@ -1,0 +1,84 @@
+
+llm:
+  provider: deepseek
+  model: deepseek-chat
+  temperature: 0.7
+  max_tokens: 2000
+
+embeddings:
+  model: BAAI/bge-m3
+  dimension: 1024
+  batch_size: 32
+
+reranker:
+  model: BAAI/bge-reranker-large
+  batch_size: 32
+  top_k: 24
+
+retrieval:
+  dense_top_k: 50
+  bm25_top_k: 50
+  rrf_k: 60
+  final_top_k: 50
+
+scoring:
+  cross_encoder_weight: 0.55
+  base_retrieval_weight: 0.25
+  freshness_weight: 0.12
+  credibility_weight: 0.08
+  freshness_tau_days: 30
+  dedup_threshold: 0.9
+
+chunking:
+  target_size: 800
+  overlap: 100
+  min_size: 200
+  max_size: 1200
+
+qdrant:
+  host: localhost
+  port: 6333
+  collection_name: rag_documents
+  hnsw_m: 16
+  hnsw_ef_search: 64
+  quantization: true
+
+elasticsearch:
+  host: localhost
+  port: 9200
+  index_name: rag_documents
+
+redis:
+  host: localhost
+  port: 6379
+  db: 0
+  ttl_seconds: 3600
+
+credibility_priors:
+  default: 0.5
+  domains:
+    docs.python.org: 0.95
+    github.com: 0.85
+    stackoverflow.com: 0.80
+    wikipedia.org: 0.75
+    medium.com: 0.60
+    reddit.com: 0.50
+
+tools:
+  weather:
+    enabled: true
+    provider: open-meteo
+  finance:
+    enabled: true
+    provider: yfinance
+  transport:
+    enabled: true
+    provider: openrouteservice
+  web_search:
+    enabled: true
+    provider: tavily
+
+performance:
+  fast_mode: false
+  strict_local: false
+  freshness_required: false
