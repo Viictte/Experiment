@@ -484,6 +484,24 @@ class RAGWorkflow:
         
         return self.transport_tool.get_route(locations[0], locations[1])
     
+    def _handle_time(self, query: str, location: str = '') -> Dict[str, Any]:
+        """Handle time queries"""
+        # Extract location if not provided
+        if not location:
+            location = self._extract_location(query)
+        
+        return self.time_tool.get_current_time(location)
+    
+    def _is_time_query(self, query: str) -> bool:
+        """Check if query is asking for current time"""
+        query_lower = query.lower()
+        time_keywords = [
+            'what time', 'what\'s the time', 'current time', 'time now',
+            'what is the time', 'tell me the time', '幾點', '現在幾點',
+            '時間', '現在時間', 'what\'s time', 'whats the time'
+        ]
+        return any(keyword in query_lower for keyword in time_keywords)
+    
     def _extract_fx_pair(self, query: str) -> Optional[tuple]:
         """Extract currency pair from FX queries (e.g., HKD/JPY, USD to EUR)"""
         query_upper = query.upper()
@@ -669,6 +687,21 @@ class RAGWorkflow:
                     wind = hour.get('windspeed', 'N/A')
                     humidity = hour.get('humidity', 'N/A')
                     lines.append(f"  {time}: {temp}°C, {desc}, precipitation: {precip}mm, wind: {wind}km/h, humidity: {humidity}%")
+        
+        return '\n'.join(lines)
+    
+    def _format_time_for_context(self, time_results: Dict[str, Any]) -> str:
+        """Format time data in a structured, readable way for LLM context"""
+        lines = []
+        
+        location = time_results.get('location', 'Unknown')
+        timezone = time_results.get('timezone', 'Unknown')
+        
+        lines.append(f"Current time for {location} ({timezone}):")
+        lines.append(f"  Date and time: {time_results.get('formatted_time')}")
+        lines.append(f"  Day of week: {time_results.get('day_of_week_name')}")
+        lines.append(f"  Timezone: {timezone}")
+        lines.append(f"  UTC offset: {time_results.get('utc_offset')}")
         
         return '\n'.join(lines)
     
