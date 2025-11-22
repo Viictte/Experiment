@@ -4,6 +4,7 @@ from typing import Dict, Any, List, Optional, Callable
 from datetime import datetime
 import asyncio
 import requests
+import pytz
 from rag_system.core.config import get_config
 from rag_system.workflows.llm_router import get_llm_router
 from rag_system.workflows.simple_detector import get_simple_detector
@@ -52,6 +53,31 @@ class RAGWorkflow:
         self.transport_tool = get_transport_tool()
         self.web_search_tool = get_web_search_tool()
         self.document_parser = get_document_parser()
+        # Default timezone for time-aware queries
+        self.default_timezone = pytz.timezone('Asia/Hong_Kong')
+    
+    def _get_current_time_context(self, query: str) -> str:
+        """Get current time context for time-sensitive queries"""
+        # Check if query contains time-sensitive keywords
+        time_keywords = ['now', 'current', 'currently', 'right now', 'this moment', 'tonight', 'this afternoon', 
+                        'this morning', 'this evening', 'today', 'open now', '現在', '目前', '正在', '今天', '今晚']
+        
+        query_lower = query.lower()
+        is_time_sensitive = any(keyword in query_lower for keyword in time_keywords)
+        
+        if not is_time_sensitive:
+            return ""
+        
+        # Get current time in UTC and local timezone
+        now_utc = datetime.now(pytz.UTC)
+        now_local = now_utc.astimezone(self.default_timezone)
+        
+        time_context = f"\n\nCurrent Time Information:\n"
+        time_context += f"- UTC: {now_utc.strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
+        time_context += f"- Local ({self.default_timezone.zone}): {now_local.strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
+        time_context += f"- Day of week: {now_local.strftime('%A')}\n"
+        
+        return time_context
     
     def execute(self, query: str, strict_local: bool = False, fast_mode: bool = False, files: Optional[List[str]] = None, progress_callback: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
         start_time = datetime.now()
