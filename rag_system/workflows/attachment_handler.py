@@ -289,13 +289,11 @@ class DocumentAttachmentHandler:
             return f"Error parsing HTML: {str(e)}", {'error': str(e)}
     
     def _parse_image(self, path: Path) -> tuple[str, Dict[str, Any]]:
-        """Parse image - return placeholder for vision analysis"""
-        # Note: DeepSeek vision API is not yet available through OpenAI-compatible interface
-        # For now, return a placeholder that indicates image needs manual analysis
-        # Future: Integrate vision API when available
-        
+        """Parse image using vision API"""
         try:
             from PIL import Image
+            from rag_system.tools.vision import get_vision_tool
+            
             image = Image.open(path)
             width, height = image.size
             format_name = image.format
@@ -308,12 +306,32 @@ class DocumentAttachmentHandler:
                 'path': str(path)
             }
             
-            # Return image metadata for now
-            # The RAG workflow can use web search to help answer image-related questions
+            # Try to get vision description
+            vision_tool = get_vision_tool()
+            vision_description = None
+            
+            if vision_tool.enabled and vision_tool.api_key:
+                try:
+                    # Read image bytes
+                    with open(path, 'rb') as f:
+                        image_bytes = f.read()
+                    
+                    # Get vision description
+                    vision_description = vision_tool.describe_image(image_bytes)
+                except Exception as e:
+                    # Graceful degradation - continue with metadata only
+                    pass
+            
+            # Build content string
             content = f"[Image: {path.name}]\n"
             content += f"Format: {format_name}\n"
             content += f"Dimensions: {width}x{height}\n"
-            content += f"Note: This is an image file. To identify its content, please describe what you see or ask specific questions about it."
+            
+            if vision_description:
+                content += f"\nVision Analysis:\n{vision_description}\n"
+                metadata['vision_description'] = vision_description
+            else:
+                content += f"\nNote: This is an image file. Vision analysis is not available."
             
             return content, metadata
         except Exception as e:

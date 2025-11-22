@@ -82,16 +82,22 @@ credibility_priors:
 tools:
   weather:
     enabled: true
-    provider: open-meteo
+    provider: weatherapi
   finance:
     enabled: true
-    provider: yfinance
+    provider: alpha_vantage
   transport:
     enabled: true
-    provider: openrouteservice
+    provider: here
   web_search:
     enabled: true
     provider: tavily
+  vision:
+    enabled: true
+    api_url: https://yinli.one/v1/chat/completions
+    model: gemini-2.5-flash-lite
+    max_tokens: 500
+    timeout: 30
 
 performance:
   fast_mode: false
