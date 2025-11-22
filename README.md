@@ -126,16 +126,43 @@ nano .env  # or use your preferred editor
 # Set: DEEPSEEK_API_KEY=sk-your-actual-key-here
 ```
 
-**Option 2: Using Makefile**
+**Option 2: Manual commands (equivalent to old Makefile)**
 ```bash
 git clone https://github.com/Viictte/RAG_LLM.git
 cd RAG_LLM
-make setup          # Create venv and install dependencies
-make up             # Start Docker services
+
+# Setup: Create venv and install dependencies
+python3 -m venv .venv
+.venv/bin/python3 -m pip install --upgrade pip
+.venv/bin/python3 -m pip install -r requirements.txt
+
+# Start Docker services
+docker compose up -d
+sleep 5  # Wait for services to be ready
+
+# Activate virtual environment
 source .venv/bin/activate
-cp .env.example .env  # Create .env file
-nano .env           # Add your DEEPSEEK_API_KEY
-make status         # Verify system
+
+# Create .env file
+cp .env.example .env
+nano .env  # Add your DEEPSEEK_API_KEY
+
+# Verify system status
+python3 ./rag status
+
+# Optional: Ingest sample documents
+python3 ./rag ingest ./data/corpus
+
+# Optional: Test queries
+python3 ./rag ask "What is RAG and what are its key components?" --strict-local
+python3 ./rag ask "What is RAG and what are its key components?"
+
+# To stop services
+docker compose down
+
+# To clean up (remove venv and Docker volumes)
+rm -rf .venv
+docker compose down -v
 ```
 
 ### Manual Setup (Step-by-Step)
@@ -243,60 +270,134 @@ You should see:
 
 ## WebUI
 
-The RAG system includes a modern, functional web interface for easy interaction.
+The RAG system includes a modern, functional web interface for easy interaction with comprehensive knowledge base management, tool visualizations, and system monitoring.
 
 ### Starting the WebUI
 
-**1. Start the backend server:**
+**1. Ensure all services are running:**
+```bash
+# Start Docker services (if not already running)
+docker compose up -d
+
+# Verify services are ready
+./rag status
+```
+
+**2. Start the backend server:**
 ```bash
 cd /home/ubuntu/Experiment
 source .venv/bin/activate
 python -m uvicorn webui.backend.app.main:app --host 0.0.0.0 --port 8000
 ```
 
-**2. Start the frontend dev server (in a new terminal):**
+**3. Start the frontend dev server (in a new terminal):**
 ```bash
 cd /home/ubuntu/Experiment/webui/frontend
 npm install  # First time only
 npm run dev
 ```
 
-**3. Open your browser:**
+**4. Open your browser:**
 ```
 http://localhost:5173
 ```
 
 ### WebUI Features
 
-- **Chat Interface**: Modern chat UI with message history
-- **System Status**: Real-time service health indicators (Qdrant, Elasticsearch, Redis, Embeddings)
-- **Settings Sidebar**:
+#### Main Chat Interface
+
+**Left Sidebar:**
+- **Chat Tab**: View current session conversation history
+- **Knowledge Base Tab**: Direct access to KB management
+- **Settings Panel**:
   - **Strict Local Mode**: Only use local knowledge base, no external sources
   - **Web Search Toggle**: Enable/disable web search for queries
-- **Source Badges**: Color-coded chips showing which sources were used (Local KB, Web Search, Tools)
-- **Citations Display**: Clickable links with titles and URLs
+
+**Center Panel:**
+- **Chat Messages**: User queries and AI responses with inline citations
+- **Source Badges**: Color-coded chips showing which sources contributed:
+  - 🔵 Blue: Web Search
+  - 🟢 Green: Local Knowledge Base
+  - 🟠 Orange: Domain Tools (Weather, Finance, Transport)
+  - 📎 Gray: Attachments
+- **Collapsible Details Sections**: Click to expand/collapse tool-specific visualizations:
+  - **Weather**: Location, temperature, conditions, humidity
+  - **Finance**: Ticker table with price, change, timestamp
+  - **Transport**: Origin, destination, distance, duration
+  - **Web Search**: Clickable citations with titles and URLs
 - **Latency Indicator**: Shows response time for each query
 - **Fast Path Badge**: Indicates when queries use the optimized fast path
-- **Error Handling**: Clear error messages with helpful feedback
-- **Responsive Design**: Works on desktop and mobile devices
+
+**Input Area:**
+- Query text box with Enter to send (Shift+Enter for new line)
+- File attachment button (multi-file support)
+- Send button
+
+**Header:**
+- **New Chat Button**: Clear conversation and start fresh
+- **System Status Badge**: Click to view detailed service health
+
+#### Knowledge Base Management
+
+Access via the KB tab in the left sidebar:
+
+**Upload Documents:**
+- Drag and drop or click to select files
+- Supports: PDF, DOCX, Markdown, Text, Images, Audio
+- Multi-file upload support
+- Real-time ingestion progress indicator
+
+**Ingest URLs:**
+- Paste URLs to ingest web content
+- Supports articles, documentation, and web pages
+
+**KB Statistics:**
+- Document count: Total documents in the knowledge base
+- Chunk count: Total chunks indexed
+- Last ingested: Timestamp of most recent ingestion
+- Auto-refreshes every 10 seconds when KB tab is active
+
+#### System Status Modal
+
+Click the status badge in the header to view:
+
+- ✅ **Qdrant**: Vector database connectivity
+- ✅ **Elasticsearch**: Keyword search connectivity
+- ✅ **Redis**: Cache connectivity
+- ✅ **Embeddings**: Model loading status
+- ✅ **Overall**: System health summary
+
+Each service shows real-time status (Connected/Disconnected) with color indicators.
 
 ### WebUI API Endpoints
 
 The backend provides these REST API endpoints:
 
 - `POST /api/ask` - Query the RAG system
-  - Body: `{ query: string, strict_local?: boolean, fast?: boolean, web_search?: boolean }`
-  - Returns: Same JSON structure as CLI `--json` mode
+  - Body: `{ query: string, strict_local?: boolean, fast?: boolean, web_search?: boolean, files?: File[] }`
+  - Returns: Same JSON structure as CLI `--json` mode with additional `tool_results` field
   
 - `POST /api/ingest` - Upload documents to knowledge base
-  - Accepts: File uploads or URLs (comma-separated)
+  - Accepts: File uploads (multipart/form-data) or URLs (comma-separated in `urls` field)
   - Returns: `{ status, message, files_processed, chunks_created }`
+  
+- `GET /api/kb/stats` - Get knowledge base statistics
+  - Returns: `{ document_count, chunk_count, last_ingested_at }`
   
 - `GET /api/status` - Check service health
   - Returns: `{ qdrant, elasticsearch, redis, embeddings, overall }`
   
 - `GET /healthz` - Basic health check
   - Returns: `{ status: "ok" }`
+
+### WebUI Design
+
+- **Modern UI**: Built with React + Vite + TypeScript + Tailwind CSS + shadcn/ui
+- **Responsive Design**: Works on desktop and mobile devices
+- **Clean Layout**: Card-based design with smooth animations
+- **Color-Coded Sources**: Easy visual identification of information sources
+- **Error Handling**: Clear error messages with helpful feedback
+- **Real-Time Updates**: System status and KB stats refresh automatically
 
 ### Image Understanding
 

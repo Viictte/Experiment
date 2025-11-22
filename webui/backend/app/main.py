@@ -60,6 +60,11 @@ class IngestResponse(BaseModel):
     files_processed: int
     chunks_created: Optional[int] = None
 
+class KBStatsResponse(BaseModel):
+    document_count: int
+    chunk_count: int
+    last_ingested_at: Optional[str] = None
+
 @app.get("/healthz")
 async def healthz():
     return {"status": "ok"}
@@ -197,3 +202,27 @@ async def status():
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error checking status: {str(e)}")
+
+@app.get("/api/kb/stats", response_model=KBStatsResponse)
+async def kb_stats():
+    """
+    Get knowledge base statistics.
+    
+    Returns document count, chunk count, and last ingestion timestamp.
+    """
+    try:
+        qdrant = get_qdrant_service()
+        collection_info = qdrant.client.get_collection(collection_name=qdrant.collection_name)
+        
+        return KBStatsResponse(
+            document_count=collection_info.points_count,
+            chunk_count=collection_info.points_count,
+            last_ingested_at=None  # Not tracked yet, could be added later
+        )
+    except Exception as e:
+        # Return zeros if KB is not accessible
+        return KBStatsResponse(
+            document_count=0,
+            chunk_count=0,
+            last_ingested_at=None
+        )
