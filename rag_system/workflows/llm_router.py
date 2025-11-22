@@ -305,7 +305,10 @@ Partial Answers:
 - If the context supports SOME but NOT ALL requested details, you MUST:
   (a) Answer only the parts that are clearly supported by context
   (b) Explicitly state which parts cannot be answered from the context
-- Example: If asked for "winner and goal times" and context shows winner but not exact minutes, answer the winner and explicitly say "the exact minute times for each goal are not provided in the available sources"
+- Examples:
+  - If asked for "winner and goal times" and context shows winner but not exact minutes, answer the winner and explicitly say "the exact minute times for each goal are not provided in the available sources"
+  - If asked for "latest Champions League final winner and goal scorers with times" and context clearly shows "PSG defeated Inter Milan" but no goal times, you MUST answer: "The most recent Champions League final was won by PSG, who defeated Inter Milan. However, the exact goal times and scorers are not provided in the available sources."
+  - If asked for "exchange rate and calculation" and context shows the rate but not the calculation, you MUST provide the rate and perform the calculation yourself
 - If NO parts of the question are supported by context, then say: "I don't know based on the available information."
 """
 
