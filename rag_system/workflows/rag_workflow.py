@@ -203,10 +203,14 @@ class RAGWorkflow:
                 web_results = self.web_search_tool.search(web_query, max_results=5)
                 if 'results' in web_results:
                     for result in web_results['results']:
+                        # Handle both Google (uses 'url') and Tavily (uses 'url') formats
+                        url = result.get('url', result.get('link', ''))
+                        title = result.get('title', '')
                         all_context.append({
                             'text': result.get('content', result.get('snippet', '')),
                             'source': 'web_search',
-                            'url': result.get('url', ''),
+                            'url': url,
+                            'title': title,
                             'credibility_score': 0.6,
                             'final_score': 0.7
                         })
@@ -222,11 +226,14 @@ class RAGWorkflow:
         end_time = datetime.now()
         latency_ms = (end_time - start_time).total_seconds() * 1000
         
+        # Derive sources_used from actual context instead of routing intent
+        sources_used = sorted(set(doc.get('source', 'Unknown') for doc in all_context))
+        
         return {
             'query': query,
             'answer': answer,
             'routing': routing,
-            'sources_used': sources,
+            'sources_used': sources_used,
             'tool_results': tool_results,
             'failed_tools': failed_tools,
             'context_count': len(all_context),
@@ -349,28 +356,36 @@ class RAGWorkflow:
         except Exception:
             return None
     
-    def _is_general_knowledge_query(self, query: str) -> bool:
-        general_knowledge_keywords = [
-            'what is', 'who is', 'who wrote', 'who invented', 'when was', 'where is',
-            'how many', 'how much', 'what are', 'what does', 'define', 'explain',
-            'capital of', 'formula for', 'planet', 'color', 'olympic', 'emergency',
-            'phone number', 'multiplied', 'divided', 'plus', 'minus', 'subtract',
-            '什麼是', '誰是', '誰寫', '什麼時候', '哪裡', '多少', '怎麼', '如何',
-            '首都', '公式', '行星', '顏色', '電話', '乘', '除', '加', '減'
-        ]
-        
-        query_lower = query.lower()
-        return any(keyword in query_lower for keyword in general_knowledge_keywords)
-    
     def _build_citations(self, context: List[Dict[str, Any]]) -> List[str]:
         citations = []
         for i, doc in enumerate(context[:10]):
             source = doc.get('source', 'Unknown')
             url = doc.get('url', '')
+            title = doc.get('title', '')
             
-            if url:
+            # Format citations based on source type
+            if source == 'web_search':
+                if url and title:
+                    citations.append(f"[{i+1}] Web: {title} - {url}")
+                elif url:
+                    citations.append(f"[{i+1}] Web: {url}")
+                else:
+                    citations.append(f"[{i+1}] Web Search")
+            elif source == 'local_knowledge_base':
+                # For local KB, show the document source (file path or URL)
+                if url:
+                    citations.append(f"[{i+1}] Local KB: {url}")
+                else:
+                    doc_id = doc.get('doc_id', '')
+                    if doc_id:
+                        citations.append(f"[{i+1}] Local KB: {doc_id}")
+                    else:
+                        citations.append(f"[{i+1}] Local Knowledge Base")
+            elif url:
+                # Other sources with URLs (finance_web_extraction, etc.)
                 citations.append(f"[{i+1}] {source}: {url}")
             else:
+                # Sources without URLs (finance API, weather API, etc.)
                 citations.append(f"[{i+1}] {source}")
         
         return citations
