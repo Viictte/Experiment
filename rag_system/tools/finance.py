@@ -97,6 +97,71 @@ class FinanceTool:
         except Exception as e:
             return {'error': str(e)}
     
+    def get_fx_rate(self, from_currency: str, to_currency: str) -> Dict[str, Any]:
+        """Get foreign exchange rate between two currencies using Alpha Vantage"""
+        if not self.enabled:
+            return {'error': 'Finance tool is disabled'}
+        
+        if not self.alpha_vantage_key:
+            return {'error': 'Alpha Vantage API key not configured'}
+        
+        try:
+            url = "https://www.alphavantage.co/query"
+            params = {
+                'function': 'CURRENCY_EXCHANGE_RATE',
+                'from_currency': from_currency.upper(),
+                'to_currency': to_currency.upper(),
+                'apikey': self.alpha_vantage_key
+            }
+            
+            response = requests.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            
+            if 'Error Message' in data:
+                return {'error': f'Invalid currency pair: {from_currency}/{to_currency}'}
+            
+            if 'Note' in data:
+                return {'error': 'Alpha Vantage API rate limit reached'}
+            
+            realtime_data = data.get('Realtime Currency Exchange Rate', {})
+            if not realtime_data:
+                return {'error': f'No exchange rate data for {from_currency}/{to_currency}'}
+            
+            exchange_rate = float(realtime_data.get('5. Exchange Rate', 0))
+            if exchange_rate == 0:
+                return {'error': f'No exchange rate found for {from_currency}/{to_currency}'}
+            
+            from_code = realtime_data.get('1. From_Currency Code', from_currency)
+            from_name = realtime_data.get('2. From_Currency Name', '')
+            to_code = realtime_data.get('3. To_Currency Code', to_currency)
+            to_name = realtime_data.get('4. To_Currency Name', '')
+            last_refreshed = realtime_data.get('6. Last Refreshed', '')
+            timezone = realtime_data.get('7. Time Zone', 'UTC')
+            bid_price = float(realtime_data.get('8. Bid Price', exchange_rate))
+            ask_price = float(realtime_data.get('9. Ask Price', exchange_rate))
+            
+            return {
+                'from_currency': from_code,
+                'from_currency_name': from_name,
+                'to_currency': to_code,
+                'to_currency_name': to_name,
+                'exchange_rate': exchange_rate,
+                'bid_price': bid_price,
+                'ask_price': ask_price,
+                'last_refreshed': last_refreshed,
+                'timezone': timezone,
+                'source': 'Alpha Vantage Currency Exchange',
+                'data': {
+                    'rate': exchange_rate,
+                    'bid': bid_price,
+                    'ask': ask_price,
+                    'timestamp': last_refreshed
+                }
+            }
+        except Exception as e:
+            return {'error': f'FX rate lookup failed: {str(e)}'}
+    
     def _get_global_quote(self, ticker: str) -> Dict[str, Any]:
         try:
             url = "https://www.alphavantage.co/query"

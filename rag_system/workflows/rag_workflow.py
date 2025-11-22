@@ -409,10 +409,17 @@ class RAGWorkflow:
         }
     
     def _handle_finance(self, query: str) -> Dict[str, Any]:
+        # Check if this is an FX query first
+        fx_pair = self._extract_fx_pair(query)
+        if fx_pair:
+            from_currency, to_currency = fx_pair
+            return self.finance_tool.get_fx_rate(from_currency, to_currency)
+        
+        # Otherwise, handle as stock query
         tickers = self._extract_tickers(query)
         
         if not tickers:
-            return {'error': 'No stock tickers found in query'}
+            return {'error': 'No stock tickers or currency pairs found in query'}
         
         query_lower = query.lower()
         use_intraday = any(keyword in query_lower for keyword in ['current', 'now', 'today', 'latest', 'real-time', 'realtime'])
@@ -443,6 +450,45 @@ class RAGWorkflow:
             return {'error': 'Need origin and destination for transport query'}
         
         return self.transport_tool.get_route(locations[0], locations[1])
+    
+    def _extract_fx_pair(self, query: str) -> Optional[tuple]:
+        """Extract currency pair from FX queries (e.g., HKD/JPY, USD to EUR)"""
+        query_upper = query.upper()
+        
+        # Common currency codes
+        currencies = ['USD', 'EUR', 'GBP', 'JPY', 'CNY', 'HKD', 'AUD', 'CAD', 'CHF', 'SGD', 'KRW', 'TWD', 'THB']
+        
+        # Pattern 1: "HKD/JPY", "HKD-JPY", "HKD JPY"
+        import re
+        for pattern in [r'([A-Z]{3})[/\-\s]([A-Z]{3})', r'([A-Z]{3})\s*(?:to|TO|與|和)\s*([A-Z]{3})']:
+            match = re.search(pattern, query_upper)
+            if match:
+                from_curr, to_curr = match.groups()
+                if from_curr in currencies and to_curr in currencies:
+                    return (from_curr, to_curr)
+        
+        # Pattern 2: "港幣" (HKD), "日元" (JPY), "美元" (USD) - Chinese currency names
+        chinese_currencies = {
+            '港幣': 'HKD', '港元': 'HKD', '日元': 'JPY', '日圓': 'JPY', '美元': 'USD', '美金': 'USD',
+            '人民幣': 'CNY', '歐元': 'EUR', '英鎊': 'GBP', '澳元': 'AUD', '加元': 'CAD',
+            '新台幣': 'TWD', '台幣': 'TWD', '韓元': 'KRW', '泰銖': 'THB', '新加坡元': 'SGD'
+        }
+        
+        found_currencies = []
+        for chinese_name, code in chinese_currencies.items():
+            if chinese_name in query:
+                found_currencies.append(code)
+        
+        if len(found_currencies) >= 2:
+            return (found_currencies[0], found_currencies[1])
+        
+        # Pattern 3: Check for "匯率" (exchange rate) keyword with currency codes
+        if '匯率' in query or 'exchange rate' in query.lower() or 'forex' in query.lower():
+            found_codes = [curr for curr in currencies if curr in query_upper]
+            if len(found_codes) >= 2:
+                return (found_codes[0], found_codes[1])
+        
+        return None
     
     def _extract_tickers(self, query: str) -> List[str]:
         words = query.upper().split()
