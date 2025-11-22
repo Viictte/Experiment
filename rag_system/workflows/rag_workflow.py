@@ -462,14 +462,19 @@ class RAGWorkflow:
         if not location:
             location = self._extract_location(query)
         
-        date = self._extract_date(query)
-        
         # If still no location, return error instead of defaulting to New York
         # This prevents wrong-city responses
         if not location:
             return {'error': 'No location specified in query'}
         
-        return self.weather_tool.get_weather(location, date)
+        # Check if query is asking for afternoon forecast
+        query_lower = query.lower()
+        if 'afternoon' in query_lower or 'this afternoon' in query_lower:
+            return self.weather_tool.get_afternoon_forecast(location)
+        else:
+            # Extract date if present
+            date = self._extract_date(query)
+            return self.weather_tool.get_weather(location, date)
     
     def _handle_transport(self, query: str) -> Dict[str, Any]:
         locations = self._extract_locations(query)
