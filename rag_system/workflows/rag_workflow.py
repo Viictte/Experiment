@@ -621,6 +621,52 @@ class RAGWorkflow:
         
         return False
     
+    def _format_weather_for_context(self, weather_results: Dict[str, Any]) -> str:
+        """Format weather data in a structured, readable way for LLM context"""
+        lines = []
+        
+        # Basic info
+        location = weather_results.get('location', 'Unknown')
+        provider = weather_results.get('provider', 'unknown')
+        lines.append(f"Weather data for {location} (provider: {provider})")
+        
+        # Current time and timezone
+        if 'current_time' in weather_results:
+            lines.append(f"Current time: {weather_results['current_time']}")
+        if 'timezone' in weather_results:
+            lines.append(f"Timezone: {weather_results['timezone']}")
+        
+        # Current weather (if available)
+        if 'temperature' in weather_results:
+            lines.append(f"\nCurrent conditions:")
+            lines.append(f"  Temperature: {weather_results.get('temperature')}°C")
+            if 'weather_description' in weather_results:
+                lines.append(f"  Condition: {weather_results['weather_description']}")
+            if 'precipitation' in weather_results:
+                lines.append(f"  Precipitation: {weather_results.get('precipitation')} mm")
+            if 'windspeed' in weather_results:
+                lines.append(f"  Wind speed: {weather_results.get('windspeed')} km/h")
+            if 'humidity' in weather_results:
+                lines.append(f"  Humidity: {weather_results.get('humidity')}%")
+        
+        # Afternoon forecast (if available)
+        if 'afternoon_data' in weather_results:
+            afternoon_data = weather_results['afternoon_data']
+            if afternoon_data:
+                lines.append(f"\nAfternoon forecast ({weather_results.get('afternoon_window', '12:00-18:00')}):")
+                lines.append(f"Status: {weather_results.get('afternoon_status', 'unknown')}")
+                lines.append(f"\nHourly breakdown:")
+                for hour in afternoon_data:
+                    time = hour.get('time', 'unknown')
+                    temp = hour.get('temperature', 'N/A')
+                    desc = hour.get('weather_description', 'N/A')
+                    precip = hour.get('precipitation', 0)
+                    wind = hour.get('windspeed', 'N/A')
+                    humidity = hour.get('humidity', 'N/A')
+                    lines.append(f"  {time}: {temp}°C, {desc}, precipitation: {precip}mm, wind: {wind}km/h, humidity: {humidity}%")
+        
+        return '\n'.join(lines)
+    
     def _build_citations(self, context: List[Dict[str, Any]]) -> List[str]:
         citations = []
         for i, doc in enumerate(context[:10]):
