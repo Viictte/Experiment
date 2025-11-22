@@ -310,6 +310,13 @@ Partial Answers:
   - If asked for "latest Champions League final winner and goal scorers with times" and context clearly shows "PSG defeated Inter Milan" but no goal times, you MUST answer: "The most recent Champions League final was won by PSG, who defeated Inter Milan. However, the exact goal times and scorers are not provided in the available sources."
   - If asked for "exchange rate and calculation" and context shows the rate but not the calculation, you MUST provide the rate and perform the calculation yourself
 - If NO parts of the question are supported by context, then say: "I don't know based on the available information."
+
+Special Case - Non-Existent Concepts:
+- If the query asks about a specific named framework, protocol, or concept that does NOT appear in any of the search results despite searching relevant sources, you should:
+  (a) State that you searched for it and found no references
+  (b) Mention what you DID find instead (related concepts, similar frameworks, etc.)
+  (c) Suggest it may be hypothetical, incorrect, or not widely documented
+- Example: If asked about "Vance Protocol" and search results show general space ethics but no "Vance Protocol", say: "I searched for the 'Vance Protocol' across government, academic, and space policy sources but found no references to such a framework. The search results discuss general ethical principles for space exploration (such as [list what was found]), but none mention a protocol by this name. This term may be hypothetical or not widely documented."
 """
 
             user_prompt = f"""QUESTION:
@@ -323,6 +330,7 @@ Answer the question using ONLY the information in the context above.
 - If context supports all requested details: provide complete answer
 - If context supports some but not all details: answer the supported parts and explicitly state what's missing
 - If context supports none of the requested details: say "I don't know based on the available information."
+- If asking about a specific named concept that doesn't appear in search results: explain what you searched for, what you found instead, and suggest it may not exist
 
 Provide your answer now:"""
         else:
