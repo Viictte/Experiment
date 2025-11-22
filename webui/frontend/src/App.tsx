@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import ReactMarkdown from 'react-markdown'
 import { Send, Loader2, AlertCircle, CheckCircle2, Database, Globe, Zap, RotateCcw, Upload, Link as LinkIcon, ChevronDown, ChevronUp, MessageSquare, FolderOpen, Activity } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
