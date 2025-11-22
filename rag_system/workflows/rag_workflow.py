@@ -594,13 +594,94 @@ class RAGWorkflow:
         return None
     
     def _extract_locations(self, query: str) -> List[str]:
+        """Extract origin and destination from transport queries"""
         locations = []
+        query_lower = query.lower()
         
-        if ' to ' in query.lower():
-            parts = query.lower().split(' to ')
+        # Pattern 1: "go to Y" or "get to Y" with origin in "in X" or "at X"
+        if 'go to ' in query_lower or 'get to ' in query_lower:
+            # Extract destination
+            if 'go to ' in query_lower:
+                dest_part = query_lower.split('go to ')[-1]
+            else:
+                dest_part = query_lower.split('get to ')[-1]
+            
+            dest_words = dest_part.strip().rstrip('.,!?;:').split()
+            dest = ' '.join(dest_words[:3]) if len(dest_words) >= 3 else dest_part.strip().rstrip('.,!?;:')
+            
+            # Extract origin from "in X" or "at X" (before "go to" or "get to")
+            origin = None
+            before_go = query_lower.split('go to')[0] if 'go to' in query_lower else query_lower.split('get to')[0]
+            
+            if ' in the ' in before_go:
+                origin_part = before_go.split(' in the ')[-1].strip()
+                # Stop at comma or "what" or "how"
+                for stop_word in [',', ' what', ' how', ' where']:
+                    if stop_word in origin_part:
+                        origin_part = origin_part.split(stop_word)[0].strip()
+                        break
+                origin = 'the ' + origin_part
+            elif ' in ' in before_go:
+                origin_part = before_go.split(' in ')[-1].strip()
+                # Stop at comma or "what" or "how"
+                for stop_word in [',', ' what', ' how', ' where']:
+                    if stop_word in origin_part:
+                        origin_part = origin_part.split(stop_word)[0].strip()
+                        break
+                origin = origin_part
+            elif ' at the ' in before_go:
+                origin_part = before_go.split(' at the ')[-1].strip()
+                for stop_word in [',', ' what', ' how', ' where']:
+                    if stop_word in origin_part:
+                        origin_part = origin_part.split(stop_word)[0].strip()
+                        break
+                origin = 'the ' + origin_part
+            elif ' at ' in before_go:
+                origin_part = before_go.split(' at ')[-1].strip()
+                for stop_word in [',', ' what', ' how', ' where']:
+                    if stop_word in origin_part:
+                        origin_part = origin_part.split(stop_word)[0].strip()
+                        break
+                origin = origin_part
+            elif ' from ' in before_go:
+                origin_part = before_go.split(' from ')[-1].strip()
+                for stop_word in [',', ' what', ' how', ' where']:
+                    if stop_word in origin_part:
+                        origin_part = origin_part.split(stop_word)[0].strip()
+                        break
+                origin = origin_part
+            
+            if origin and dest:
+                locations.append(origin)
+                locations.append(dest)
+        
+        # Pattern 2: "from X to Y"
+        elif ' from ' in query_lower and ' to ' in query_lower:
+            # Split by "from" first
+            after_from = query_lower.split(' from ')[-1]
+            # Then split by "to"
+            if ' to ' in after_from:
+                parts = after_from.split(' to ')
+                origin = parts[0].strip().rstrip(',')
+                dest = parts[1].strip().rstrip('.,!?;:').split()[0:3]
+                dest = ' '.join(dest)
+                locations.append(origin)
+                locations.append(dest)
+        
+        # Pattern 3: "X to Y" (simple pattern)
+        elif ' to ' in query_lower:
+            parts = query_lower.split(' to ')
             if len(parts) >= 2:
-                locations.append(parts[0].split()[-1])
-                locations.append(parts[1].split()[0])
+                # Take last 3 words before "to" as origin
+                origin_words = parts[0].strip().split()
+                origin = ' '.join(origin_words[-3:]) if len(origin_words) >= 3 else parts[0].strip()
+                
+                # Take first 3 words after "to" as destination
+                dest_words = parts[1].strip().rstrip('.,!?;:').split()
+                dest = ' '.join(dest_words[:3]) if len(dest_words) >= 3 else parts[1].strip().rstrip('.,!?;:')
+                
+                locations.append(origin)
+                locations.append(dest)
         
         return locations
     
