@@ -294,13 +294,20 @@ Provide your answer now:"""
 
 Core Rules:
 - You MUST base your answer ONLY on the provided CONTEXT and TOOL RESULTS
-- If the answer is not clearly supported by the context, you MUST say: "I don't know based on the available information."
-- Do NOT invent numbers, dates, times, temperatures, prices, or any factual data
+- Do NOT invent numbers, dates, times, temperatures, prices, or any factual data that are not in the context
 - Do NOT rely on your own prior knowledge for factual or time-sensitive queries
 - Use the context snippets and tool outputs as the single source of truth
 - If multiple snippets disagree, state the uncertainty or range instead of choosing arbitrarily
 - Cite sources using [1], [2], etc. for all factual claims
-- Respond in the same language as the query (English query → English answer, Chinese query → Traditional Chinese answer)"""
+- Respond in the same language as the query (English query → English answer, Chinese query → Traditional Chinese answer)
+
+Partial Answers:
+- If the context supports SOME but NOT ALL requested details, you MUST:
+  (a) Answer only the parts that are clearly supported by context
+  (b) Explicitly state which parts cannot be answered from the context
+- Example: If asked for "winner and goal times" and context shows winner but not exact minutes, answer the winner and explicitly say "the exact minute times for each goal are not provided in the available sources"
+- If NO parts of the question are supported by context, then say: "I don't know based on the available information."
+"""
 
             user_prompt = f"""QUESTION:
 {query}
@@ -310,8 +317,9 @@ CONTEXT (snippets and tool outputs):
 
 TASK:
 Answer the question using ONLY the information in the context above.
-If the context does not contain sufficient information to answer reliably, respond with:
-"I don't know based on the available information."
+- If context supports all requested details: provide complete answer
+- If context supports some but not all details: answer the supported parts and explicitly state what's missing
+- If context supports none of the requested details: say "I don't know based on the available information."
 
 Provide your answer now:"""
         else:
