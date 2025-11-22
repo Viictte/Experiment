@@ -16,6 +16,31 @@ from rag_system.tools.web_search import get_web_search_tool
 from rag_system.parsers.document_parser import get_document_parser
 
 class RAGWorkflow:
+    # Hong Kong location normalization mapping
+    HK_LOCATIONS = {
+        # Hong Kong Island
+        '中環': 'Central, Hong Kong', '金鐘': 'Admiralty, Hong Kong', '灣仔': 'Wan Chai, Hong Kong',
+        '銅鑼灣': 'Causeway Bay, Hong Kong', '天后': 'Tin Hau, Hong Kong', '炮台山': 'Fortress Hill, Hong Kong',
+        '北角': 'North Point, Hong Kong', '鰂魚涌': 'Quarry Bay, Hong Kong', '太古': 'Taikoo, Hong Kong',
+        '西灣河': 'Sai Wan Ho, Hong Kong', '筲箕灣': 'Shau Kei Wan, Hong Kong', '杏花邨': 'Heng Fa Chuen, Hong Kong',
+        '柴灣': 'Chai Wan, Hong Kong', '上環': 'Sheung Wan, Hong Kong', '西營盤': 'Sai Ying Pun, Hong Kong',
+        '石塘咀': 'Shek Tong Tsui, Hong Kong', '堅尼地城': 'Kennedy Town, Hong Kong',
+        # Kowloon
+        '尖沙咀': 'Tsim Sha Tsui, Hong Kong', '佐敦': 'Jordan, Hong Kong', '油麻地': 'Yau Ma Tei, Hong Kong',
+        '旺角': 'Mong Kok, Hong Kong', '太子': 'Prince Edward, Hong Kong', '石硤尾': 'Shek Kip Mei, Hong Kong',
+        '九龍塘': 'Kowloon Tong, Hong Kong', '樂富': 'Lok Fu, Hong Kong', '黃大仙': 'Wong Tai Sin, Hong Kong',
+        '鑽石山': 'Diamond Hill, Hong Kong', '彩虹': 'Choi Hung, Hong Kong', '九龍灣': 'Kowloon Bay, Hong Kong',
+        '牛頭角': 'Ngau Tau Kok, Hong Kong', '觀塘': 'Kwun Tong, Hong Kong', '藍田': 'Lam Tin, Hong Kong',
+        '油塘': 'Yau Tong, Hong Kong', '紅磡': 'Hung Hom, Hong Kong', '何文田': 'Ho Man Tin, Hong Kong',
+        '土瓜灣': 'To Kwa Wan, Hong Kong',
+        # New Territories
+        '荃灣': 'Tsuen Wan, Hong Kong', '葵涌': 'Kwai Chung, Hong Kong', '青衣': 'Tsing Yi, Hong Kong',
+        '沙田': 'Sha Tin, Hong Kong', '大圍': 'Tai Wai, Hong Kong', '馬鞍山': 'Ma On Shan, Hong Kong',
+        '大埔': 'Tai Po, Hong Kong', '粉嶺': 'Fanling, Hong Kong', '上水': 'Sheung Shui, Hong Kong',
+        '元朗': 'Yuen Long, Hong Kong', '天水圍': 'Tin Shui Wai, Hong Kong', '屯門': 'Tuen Mun, Hong Kong',
+        '將軍澳': 'Tseung Kwan O, Hong Kong', '西貢': 'Sai Kung, Hong Kong', '東涌': 'Tung Chung, Hong Kong',
+    }
+    
     def __init__(self):
         self.config = get_config()
         self.llm_router = get_llm_router()
@@ -78,6 +103,22 @@ class RAGWorkflow:
         
         # Perform query analysis for better domain detection and location extraction
         query_analysis = self.llm_router.analyze_query(query)
+        
+        # Normalize Hong Kong location names (Chinese -> English + HK flag)
+        is_hk_query = False
+        if query_analysis.get('location'):
+            location = query_analysis['location']
+            # Check if location matches any HK district
+            for hk_chinese, hk_english in self.HK_LOCATIONS.items():
+                if hk_chinese in location:
+                    query_analysis['location'] = hk_english
+                    query_analysis['is_hk_query'] = True
+                    is_hk_query = True
+                    break
+            # Also check if "hong kong" is already in the location
+            if not is_hk_query and 'hong kong' in location.lower():
+                query_analysis['is_hk_query'] = True
+                is_hk_query = True
         
         if not strict_local and self.simple_detector.is_simple(query):
             report_progress("Generating answer (fast path)...")
@@ -267,17 +308,21 @@ class RAGWorkflow:
                 location = query_analysis.get('location', '')
                 
                 # For HK-specific queries, prefer HK domains
-                if location and 'hong kong' in location.lower():
+                is_hk = query_analysis.get('is_hk_query', False) or (location and 'hong kong' in location.lower())
+                if is_hk:
                     filters = {
                         'preferred_domains': ['gov.hk', 'hkpl.gov.hk', 'hko.gov.hk', 'td.gov.hk', 'info.gov.hk'],
                         'blocked_domains': []
                     }
+                    # For HK cuisine queries, prefer OpenRice and TripAdvisor
+                    if domain == 'cuisine':
+                        filters['preferred_domains'].extend(['openrice.com', 'openrice.com.hk', 'tripadvisor.com.hk'])
                 
                 # Block low-quality sources for factual queries
-                if domain in ['weather', 'finance', 'hk_local']:
+                if domain in ['weather', 'finance', 'hk_local', 'cuisine']:
                     if filters is None:
                         filters = {'preferred_domains': [], 'blocked_domains': []}
-                    filters['blocked_domains'].extend(['reddit.com', 'facebook.com', 'quora.com'])
+                    filters['blocked_domains'].extend(['reddit.com', 'facebook.com', 'quora.com', 'instagram.com', 'youtube.com'])
                 
                 web_results = self.web_search_tool.search(search_query, max_results=5, filters=filters)
                 if 'results' in web_results:
