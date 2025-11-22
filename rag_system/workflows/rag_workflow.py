@@ -268,8 +268,10 @@ class RAGWorkflow:
                 tool_results['weather'] = weather_results
                 domain_tools_used.append('weather')
                 if 'data' in weather_results and weather_results['data']:
+                    # Format weather data in a structured, readable way
+                    weather_text = self._format_weather_for_context(weather_results)
                     all_context.append({
-                        'text': str(weather_results),
+                        'text': weather_text,
                         'source': 'weather',
                         'credibility_score': 0.85,
                         'final_score': 0.8
