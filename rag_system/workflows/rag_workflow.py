@@ -55,6 +55,9 @@ class RAGWorkflow:
         self.document_parser = get_document_parser()
         # Default timezone for time-aware queries
         self.default_timezone = pytz.timezone('Asia/Hong_Kong')
+        # Initialize time tool
+        from rag_system.tools.time_tool import get_time_tool
+        self.time_tool = get_time_tool()
     
     def _get_current_time_context(self, query: str) -> str:
         """Get current time context for time-sensitive queries"""
@@ -205,6 +208,25 @@ class RAGWorkflow:
         
         if not strict_local:
             domain_tools_used = []
+            
+            # Check for time queries first (highest priority, no web search needed)
+            if self._is_time_query(query):
+                report_progress("Getting current time...")
+                location = query_analysis.get('location', '')
+                time_results = self._handle_time(query, location=location)
+                tool_results['time'] = time_results
+                domain_tools_used.append('time')
+                if 'error' not in time_results:
+                    # Format time data for context
+                    time_text = self._format_time_for_context(time_results)
+                    all_context.append({
+                        'text': time_text,
+                        'source': 'time',
+                        'credibility_score': 1.0,
+                        'final_score': 1.0
+                    })
+                    # For time queries, skip web search and other tools
+                    sources = ['time']
             
             if 'finance' in sources:
                 report_progress("Fetching finance data...")
