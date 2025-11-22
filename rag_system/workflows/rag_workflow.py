@@ -119,12 +119,14 @@ class RAGWorkflow:
         tool_results = {}
         failed_tools = []
         
-        min_context_threshold = 3
+        min_kb_threshold = 3
+        kb_docs_count = 0
         
         if 'local_knowledge_base' in sources:
             report_progress("Retrieving from knowledge base...")
             local_docs = self.retrieval.retrieve(query)
             all_context.extend(local_docs)
+            kb_docs_count = len(local_docs)
             tool_results['local_knowledge_base'] = {
                 'count': len(local_docs),
                 'docs': local_docs
@@ -190,11 +192,20 @@ class RAGWorkflow:
                 elif 'error' in transport_results:
                     failed_tools.append('transport')
             
+            # Check if we have rich domain context from specialized tools
+            has_domain_context = any(
+                doc.get('source') in {'finance', 'weather', 'transport', 'finance_web_extraction'}
+                for doc in all_context
+            )
+            
+            # Only use web search when:
+            # 1. Router explicitly requested it, OR
+            # 2. Domain tools failed (need fallback), OR
+            # 3. KB is insufficient AND we don't have domain context
             should_use_web_search = (
                 'web_search' in sources or
-                len(domain_tools_used) > 0 or
                 len(failed_tools) > 0 or
-                len(all_context) < min_context_threshold
+                (kb_docs_count < min_kb_threshold and not has_domain_context)
             )
             
             if should_use_web_search and not fast_mode:

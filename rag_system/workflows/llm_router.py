@@ -56,20 +56,25 @@ class LLMRouter:
 
 Available sources:
 - local_knowledge_base: Internal documents and knowledge base
-- web_search: Real-time web search for current information
-- finance: Stock prices, market data, company financials
-- weather: Weather forecasts and historical weather data
-- transport: Routes, directions, travel times
+- web_search: Real-time web search for current information, news, articles, blogs
+- finance: Stock prices, market data, company financials (real-time API data)
+- weather: Weather forecasts and historical weather data (real-time API data)
+- transport: Routes, directions, travel times (real-time API data)
 - multimodal_ingest: Process uploaded files (PDFs, images, documents)
 
 Selection guidelines:
-- Contains stock ticker or financial terms? → finance
-- Contains "weather", city name, or date with weather context? → weather
-- Contains route, address, or travel query? → transport
+- Stock prices/market data/company financials? → finance (do NOT add web_search unless user asks for "news" or "articles")
+- Weather conditions/forecasts? → weather (do NOT add web_search unless user asks for weather "news" or unusual events)
+- Routes/directions/travel times? → transport (do NOT add web_search)
 - File attached or document processing needed? → multimodal_ingest
-- Needs current/recent information? → web_search + local_knowledge_base
-- General knowledge query? → local_knowledge_base
-- Can select multiple sources if needed
+- Latest news/articles/blogs/current events? → web_search (optionally + local_knowledge_base if relevant)
+- General knowledge/definitions/facts? → local_knowledge_base only
+- Can select multiple sources if needed, but prefer specialized tools over web_search when available
+
+Key principle: Use specialized tools (finance, weather, transport) for their domains. Only add web_search when:
+1. User explicitly asks for news/articles/blogs/analysis, OR
+2. Query is about general current events not covered by specialized tools, OR
+3. No specialized tool matches the query
 
 Select the most appropriate sources for the query."""
 
