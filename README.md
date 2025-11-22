@@ -712,6 +712,68 @@ python3 ./rag ask "What does this audio say?" --file ./your_audio.mp3
   # Add to .bashrc or .zshrc to make permanent
   ```
 
+**Issue: Connection timeout to huggingface.co (Model download fails)**
+- **Cause:** Poor connectivity to HuggingFace in certain regions (e.g., Hong Kong, mainland China, some corporate networks)
+- **Error message:** `HTTPSConnectionPool(host='huggingface.co', port=443): Max retries exceeded... ConnectTimeoutError`
+- **Solution:** Multiple options available:
+
+  **Option 1: Increase timeout (recommended first step)**
+  ```bash
+  # Increase HuggingFace download timeout to 120 seconds
+  export HF_HUB_TIMEOUT=120
+  
+  # Add to .bashrc or .zshrc to make permanent:
+  echo 'export HF_HUB_TIMEOUT=120' >> ~/.bashrc
+  source ~/.bashrc
+  
+  # Then restart the backend/CLI
+  ```
+
+  **Option 2: Use a VPN or proxy**
+  - Use a VPN that can reliably access huggingface.co
+  - Configure your system proxy settings if behind a corporate firewall
+
+  **Option 3: Use a HuggingFace mirror**
+  ```bash
+  # Use a mirror (example: hf-mirror.com)
+  export HF_ENDPOINT=https://hf-mirror.com
+  
+  # Add to .bashrc or .zshrc to make permanent:
+  echo 'export HF_ENDPOINT=https://hf-mirror.com' >> ~/.bashrc
+  source ~/.bashrc
+  
+  # Then restart the backend/CLI
+  ```
+
+  **Option 4: Pre-download models on a different machine**
+  ```bash
+  # On a machine with good connectivity to huggingface.co:
+  python3 -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-m3')"
+  python3 -c "from sentence_transformers import CrossEncoder; CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"
+  
+  # Find the cache directory (usually ~/.cache/huggingface/)
+  ls ~/.cache/huggingface/hub/
+  
+  # Zip the models:
+  cd ~/.cache/huggingface/
+  tar -czf models.tar.gz hub/
+  
+  # Transfer models.tar.gz to the target machine and extract:
+  # On target machine:
+  mkdir -p ~/.cache/huggingface/
+  cd ~/.cache/huggingface/
+  tar -xzf /path/to/models.tar.gz
+  
+  # Now the models are cached and won't need to be downloaded
+  ```
+
+  **Option 5: Use local model path (advanced)**
+  - Download the model manually to a local directory
+  - Edit `config/config.yaml` and set `embeddings.model` to the local path
+  - Example: `embeddings.model: /path/to/local/bge-m3`
+
+**Note:** The system automatically uses a 60-second timeout (increased from the default 10 seconds) to help with slow connections. If you're still experiencing timeouts, try Option 1 to increase it further to 120 seconds.
+
 ## API Keys
 
 **Required:**
