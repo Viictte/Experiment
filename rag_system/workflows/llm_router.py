@@ -180,6 +180,14 @@ Provide your answer now:"""
                 return self.answer_direct(query)
             return "I couldn't find relevant information to answer your query. Please try rephrasing your question or check if the required data sources are available."
         
+        # Check cache first
+        from rag_system.services.redis_service import get_redis_service
+        redis = get_redis_service()
+        citations_str = str(citations)
+        cached_answer = redis.get_answer_cache(query, citations_str)
+        if cached_answer:
+            return cached_answer
+        
         context_text = "\n\n".join([
             f"[{i+1}] {doc.get('text', '')}\nSource: {doc.get('source', 'Unknown')}"
             for i, doc in enumerate(context)
@@ -235,7 +243,12 @@ Provide your answer now:"""
                 max_tokens=self.max_tokens
             )
             
-            return response.choices[0].message.content
+            answer = response.choices[0].message.content
+            
+            # Cache the answer
+            redis.set_answer_cache(query, citations_str, answer)
+            
+            return answer
         except Exception as e:
             return f"Error generating answer: {str(e)}"
 

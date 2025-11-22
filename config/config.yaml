@@ -16,10 +16,10 @@ reranker:
   top_k: 24
 
 retrieval:
-  dense_top_k: 50
-  bm25_top_k: 50
+  dense_top_k: 20
+  bm25_top_k: 20
   rrf_k: 60
-  final_top_k: 50
+  final_top_k: 20
 
 scoring:
   cross_encoder_weight: 0.55
