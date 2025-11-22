@@ -32,6 +32,7 @@ class AskRequest(BaseModel):
     query: str
     strict_local: Optional[bool] = False
     fast: Optional[bool] = False
+    web_search: Optional[bool] = True
 
 class AskResponse(BaseModel):
     query: str

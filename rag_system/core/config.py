@@ -8,10 +8,11 @@ from dotenv import load_dotenv
 
 class Config:
     def __init__(self, config_path: Optional[str] = None):
-        load_dotenv()
+        project_root = Path(__file__).parent.parent.parent
+        load_dotenv(dotenv_path=project_root / ".env")
         
         if config_path is None:
-            config_path = Path(__file__).parent.parent.parent / "config" / "config.yaml"
+            config_path = project_root / "config" / "config.yaml"
         
         with open(config_path, 'r') as f:
             self._config = yaml.safe_load(f)
@@ -21,9 +22,6 @@ class Config:
     def _env_overrides(self):
         if os.getenv('DEEPSEEK_API_KEY'):
             self._config.setdefault('llm', {})['api_key'] = os.getenv('DEEPSEEK_API_KEY')
-        
-        if os.getenv('TAVILY_API_KEY'):
-            self._config.setdefault('tools', {}).setdefault('web_search', {})['api_key'] = os.getenv('TAVILY_API_KEY')
         
         if os.getenv('OPENROUTESERVICE_API_KEY'):
             self._config.setdefault('tools', {}).setdefault('transport', {})['api_key'] = os.getenv('OPENROUTESERVICE_API_KEY')
