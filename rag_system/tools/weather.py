@@ -5,10 +5,40 @@ import requests
 from datetime import datetime, timedelta
 from rag_system.core.config import get_config
 
+# WMO Weather Code Descriptions
+WMO_CODES = {
+    0: "Clear sky",
+    1: "Mainly clear",
+    2: "Partly cloudy",
+    3: "Overcast",
+    45: "Fog",
+    48: "Depositing rime fog",
+    51: "Light drizzle",
+    53: "Moderate drizzle",
+    55: "Dense drizzle",
+    61: "Slight rain",
+    63: "Moderate rain",
+    65: "Heavy rain",
+    71: "Slight snow",
+    73: "Moderate snow",
+    75: "Heavy snow",
+    77: "Snow grains",
+    80: "Slight rain showers",
+    81: "Moderate rain showers",
+    82: "Violent rain showers",
+    85: "Slight snow showers",
+    86: "Heavy snow showers",
+    95: "Thunderstorm",
+    96: "Thunderstorm with slight hail",
+    99: "Thunderstorm with heavy hail"
+}
+
 class WeatherTool:
     def __init__(self):
         self.config = get_config()
         self.enabled = self.config.get('tools.weather.enabled', True)
+        # Default timezone for time-based queries (can be overridden)
+        self.default_timezone = self.config.get('tools.weather.default_timezone', 'Asia/Hong_Kong')
     
     def get_weather(self, location: str, date: Optional[str] = None) -> Dict[str, Any]:
         if not self.enabled:
@@ -80,13 +110,20 @@ class WeatherTool:
             'latitude': lat,
             'longitude': lon,
             'current_weather': True,
-            'hourly': 'temperature_2m,precipitation,windspeed_10m'
+            'hourly': 'temperature_2m,precipitation,windspeed_10m',
+            'timezone': self.default_timezone
         }
         
         response = requests.get(url, params=params, timeout=10)
         response.raise_for_status()
         
         data = response.json()
+        
+        # Add WMO code description to current weather
+        if 'current_weather' in data:
+            weathercode = data['current_weather'].get('weathercode', 0)
+            data['current_weather']['weather_description'] = WMO_CODES.get(weathercode, f"Unknown code {weathercode}")
+        
         return data
     
     def _get_forecast(self, lat: float, lon: float, date: str) -> Dict[str, Any]:
@@ -94,16 +131,101 @@ class WeatherTool:
         params = {
             'latitude': lat,
             'longitude': lon,
-            'hourly': 'temperature_2m,precipitation,windspeed_10m',
+            'hourly': 'temperature_2m,precipitation,windspeed_10m,weathercode',
             'start_date': date,
-            'end_date': date
+            'end_date': date,
+            'timezone': self.default_timezone
         }
         
         response = requests.get(url, params=params, timeout=10)
         response.raise_for_status()
         
         data = response.json()
+        
+        # Add WMO code descriptions to hourly data
+        if 'hourly' in data and 'weathercode' in data['hourly']:
+            data['hourly']['weather_descriptions'] = [
+                WMO_CODES.get(code, f"Unknown code {code}")
+                for code in data['hourly']['weathercode']
+            ]
+        
         return data
+    
+    def get_afternoon_forecast(self, location: str) -> Dict[str, Any]:
+        """Get forecast specifically for this afternoon (12:00-18:00 local time)"""
+        if not self.enabled:
+            return {'error': 'Weather tool is disabled'}
+        
+        try:
+            coords = self._geocode(location)
+            if not coords:
+                return {'error': f'Could not geocode location: {location}'}
+            
+            lat, lon = coords
+            
+            # Get current weather data with timezone
+            url = "https://api.open-meteo.com/v1/forecast"
+            params = {
+                'latitude': lat,
+                'longitude': lon,
+                'current_weather': True,
+                'hourly': 'temperature_2m,precipitation,windspeed_10m,weathercode',
+                'timezone': self.default_timezone
+            }
+            
+            response = requests.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            
+            # Parse current time from API response
+            current_time_str = data.get('current_weather', {}).get('time', '')
+            if current_time_str:
+                current_time = datetime.fromisoformat(current_time_str)
+            else:
+                current_time = datetime.now()
+            
+            # Define afternoon window (12:00-18:00)
+            afternoon_start = current_time.replace(hour=12, minute=0, second=0, microsecond=0)
+            afternoon_end = current_time.replace(hour=18, minute=0, second=0, microsecond=0)
+            
+            # Filter hourly data for afternoon hours
+            hourly = data.get('hourly', {})
+            times = hourly.get('time', [])
+            temps = hourly.get('temperature_2m', [])
+            precip = hourly.get('precipitation', [])
+            wind = hourly.get('windspeed_10m', [])
+            codes = hourly.get('weathercode', [])
+            
+            afternoon_data = []
+            for i, time_str in enumerate(times):
+                time_obj = datetime.fromisoformat(time_str)
+                if afternoon_start <= time_obj <= afternoon_end:
+                    afternoon_data.append({
+                        'time': time_str,
+                        'temperature': temps[i] if i < len(temps) else None,
+                        'precipitation': precip[i] if i < len(precip) else None,
+                        'windspeed': wind[i] if i < len(wind) else None,
+                        'weathercode': codes[i] if i < len(codes) else None,
+                        'weather_description': WMO_CODES.get(codes[i], f"Unknown code {codes[i]}") if i < len(codes) else None
+                    })
+            
+            # Determine if afternoon has passed
+            afternoon_status = "current" if current_time < afternoon_end else "past"
+            if current_time < afternoon_start:
+                afternoon_status = "upcoming"
+            
+            return {
+                'location': location,
+                'latitude': lat,
+                'longitude': lon,
+                'current_time': current_time_str,
+                'afternoon_status': afternoon_status,
+                'afternoon_window': f"{afternoon_start.strftime('%H:%M')}-{afternoon_end.strftime('%H:%M')}",
+                'afternoon_data': afternoon_data,
+                'data': data
+            }
+        except Exception as e:
+            return {'error': str(e)}
 
 _weather_tool = None
 
