@@ -89,6 +89,53 @@ async def ask(request: AskRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
 
+@app.post("/api/ask_with_attachments", response_model=AskResponse)
+async def ask_with_attachments(
+    query: str = Form(...),
+    strict_local: bool = Form(False),
+    fast: bool = Form(False),
+    web_search: bool = Form(True),
+    files: Optional[List[UploadFile]] = File(None)
+):
+    """
+    Ask a question to the RAG system with file attachments.
+    
+    This endpoint accepts file uploads along with the query and processes them
+    as attachments (not ingested into KB). Supports images, PDFs, DOCX, TXT, MD, etc.
+    """
+    try:
+        import tempfile
+        
+        # Save uploaded files to temp locations
+        temp_files = []
+        if files:
+            for file in files:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=Path(file.filename).suffix) as tmp:
+                    content = await file.read()
+                    tmp.write(content)
+                    temp_files.append(tmp.name)
+        
+        try:
+            # Execute RAG workflow with attachments
+            rag_workflow = get_rag_workflow()
+            result = rag_workflow.execute(
+                query=query,
+                strict_local=strict_local,
+                fast_mode=fast,
+                allow_web_search=web_search,
+                files=temp_files if temp_files else None
+            )
+            return result
+        finally:
+            # Clean up temp files
+            for tmp_path in temp_files:
+                try:
+                    os.unlink(tmp_path)
+                except:
+                    pass
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing query with attachments: {str(e)}")
+
 @app.post("/api/ingest", response_model=IngestResponse)
 async def ingest(
     files: Optional[List[UploadFile]] = File(None),
