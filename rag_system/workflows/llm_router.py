@@ -269,54 +269,54 @@ Provide your answer now:"""
         except Exception as e:
             return f"Error generating answer: {str(e)}"
     
-    def synthesize_answer(self, query: str, context: List[Dict[str, Any]], citations: List[str], allow_direct_knowledge: bool = False, strict_grounding: bool = False) -> str:
-        if not context:
+    def synthesize_answer(self, query: str, context: str, language: str = 'en', query_type: str = 'general', allow_direct_knowledge: bool = False, strict_grounding: bool = True) -> str:
+        if not context or not context.strip():
             if allow_direct_knowledge:
-                return self.answer_direct(query)
-            return "I don't know based on the available information. The current data sources do not provide a reliable answer to this question."
+                return self.answer_direct(query, language=language)
+            return "I don't have information about this in the available sources."
         
         # Check cache first
         from rag_system.services.redis_service import get_redis_service
         redis = get_redis_service()
-        citations_str = str(citations)
-        cached_answer = redis.get_answer_cache(query, citations_str)
+        context_hash = str(hash(context))
+        cached_answer = redis.get_answer_cache(query, context_hash)
         if cached_answer:
             return cached_answer
         
-        context_text = "\n\n".join([
-            f"[{i+1}] {doc.get('text', '')}\nSource: {doc.get('source', 'Unknown')}"
-            for i, doc in enumerate(context)
-        ])
+        context_text = context
         
         # Use strict grounding for factual/time-sensitive queries
         if strict_grounding:
-            system_prompt = """You are a retrieval-augmented assistant that provides accurate answers based strictly on provided context.
+            system_prompt = """You are a confident, accurate retrieval-augmented assistant that provides clear answers based on provided context.
 
 Core Rules:
-- You MUST base your answer ONLY on the provided CONTEXT and TOOL RESULTS
-- Do NOT invent numbers, dates, times, temperatures, prices, or any factual data that are not in the context
-- Do NOT rely on your own prior knowledge for factual or time-sensitive queries
-- Use the context snippets and tool outputs as the single source of truth
-- If multiple snippets disagree, state the uncertainty or range instead of choosing arbitrarily
-- Cite sources using [1], [2], etc. for all factual claims
-- Respond in the same language as the query (English query → English answer, Chinese query → Traditional Chinese answer)
+- Base your answer on the provided CONTEXT and TOOL RESULTS
+- Do NOT invent numbers, dates, times, temperatures, prices, or any factual data not in the context
+- Use the context snippets and tool outputs as your primary source
+- If multiple snippets disagree, state the range or most credible source
+- Cite sources using [1], [2], etc. for factual claims
+- Respond in the same language as the query
+
+Answer Style:
+- Be CONFIDENT and DIRECT when context clearly supports the answer
+- Use decisive language: "The answer is...", "According to [source]...", "The data shows..."
+- Avoid hedging phrases like "it appears", "it seems", "I might not be certain" when evidence is clear
+- Only mention limitations when information is genuinely missing or contradictory
 
 Partial Answers:
-- If the context supports SOME but NOT ALL requested details, you MUST:
-  (a) Answer only the parts that are clearly supported by context
-  (b) Explicitly state which parts cannot be answered from the context
-- Examples:
-  - If asked for "winner and goal times" and context shows winner but not exact minutes, answer the winner and explicitly say "the exact minute times for each goal are not provided in the available sources"
-  - If asked for "latest Champions League final winner and goal scorers with times" and context clearly shows "PSG defeated Inter Milan" but no goal times, you MUST answer: "The most recent Champions League final was won by PSG, who defeated Inter Milan. However, the exact goal times and scorers are not provided in the available sources."
-  - If asked for "exchange rate and calculation" and context shows the rate but not the calculation, you MUST provide the rate and perform the calculation yourself
-- If NO parts of the question are supported by context, then say: "I don't know based on the available information."
+- If context supports SOME but NOT ALL requested details:
+  (a) Confidently answer the parts clearly supported by context
+  (b) Briefly note which specific parts are not available (one sentence, no apologies)
+- If NO parts are supported: "I don't have information about this in the available sources."
 
-Special Case - Non-Existent Concepts:
-- If the query asks about a specific named framework, protocol, or concept that does NOT appear in any of the search results despite searching relevant sources, you should:
-  (a) State that you searched for it and found no references
-  (b) Mention what you DID find instead (related concepts, similar frameworks, etc.)
-  (c) Suggest it may be hypothetical, incorrect, or not widely documented
-- Example: If asked about "Vance Protocol" and search results show general space ethics but no "Vance Protocol", say: "I searched for the 'Vance Protocol' across government, academic, and space policy sources but found no references to such a framework. The search results discuss general ethical principles for space exploration (such as [list what was found]), but none mention a protocol by this name. This term may be hypothetical or not widely documented."
+Examples of GOOD confident answers:
+- "The 43rd Hong Kong Film Awards Best Actor winner is 劉青雲 for the film 《爸爸》[1][2]."
+- "Tomorrow's weather in Central will be 28°C with partly cloudy skies[1]. This is ideal for outdoor activities."
+- "The stock price of AAPL is $182.45, up 2.3% from yesterday[1]."
+
+Examples of BAD overly cautious answers:
+- "Based on the available data, it appears the winner might be 劉青雲, though I cannot confirm with complete certainty..."
+- "The weather seems to suggest it could be around 28°C, but this may not be entirely accurate..."
 """
 
             user_prompt = f"""QUESTION:
@@ -326,13 +326,14 @@ CONTEXT (snippets and tool outputs):
 {context_text}
 
 TASK:
-Answer the question using ONLY the information in the context above.
-- If context supports all requested details: provide complete answer
-- If context supports some but not all details: answer the supported parts and explicitly state what's missing
-- If context supports none of the requested details: say "I don't know based on the available information."
-- If asking about a specific named concept that doesn't appear in search results: explain what you searched for, what you found instead, and suggest it may not exist
+Provide a CONFIDENT, CLEAR answer using the context above.
+- If context fully supports the answer: state it directly and decisively with citations
+- If context partially supports: answer what's available confidently, then briefly note what's missing
+- If context doesn't support: "I don't have information about this in the available sources."
 
-Provide your answer now:"""
+Be confident when evidence is clear. Avoid unnecessary hedging.
+
+Your answer:"""
         else:
             # Permissive mode for general knowledge questions
             system_prompt = """You are a highly capable AI assistant powered by DeepSeek that provides accurate, well-cited answers by intelligently synthesizing information from multiple sources.
@@ -381,7 +382,7 @@ Provide your answer now:"""
             answer = response.choices[0].message.content
             
             # Cache the answer
-            redis.set_answer_cache(query, citations_str, answer)
+            redis.set_answer_cache(query, context_hash, answer)
             
             return answer
         except Exception as e:

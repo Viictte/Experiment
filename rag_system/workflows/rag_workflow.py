@@ -9,7 +9,8 @@ from rag_system.core.config import get_config
 from rag_system.workflows.llm_router import get_llm_router
 from rag_system.workflows.simple_detector import get_simple_detector
 from rag_system.workflows.attachment_handler import get_attachment_handler
-from rag_system.workflows.planner import get_planner
+from rag_system.workflows.planner_v2 import get_planner_v2
+from rag_system.workflows.evaluator import get_evaluator
 from rag_system.services.hybrid_retrieval import get_hybrid_retrieval_service
 from rag_system.tools.weather import get_weather_tool
 from rag_system.tools.finance import get_finance_tool
@@ -48,7 +49,8 @@ class RAGWorkflow:
         self.llm_router = get_llm_router()
         self.simple_detector = get_simple_detector()
         self.attachment_handler = get_attachment_handler()
-        self.planner = get_planner()
+        self.planner_v2 = get_planner_v2()
+        self.evaluator = get_evaluator()
         self.retrieval = get_hybrid_retrieval_service()
         self.weather_tool = get_weather_tool()
         self.finance_tool = get_finance_tool()
@@ -178,14 +180,44 @@ class RAGWorkflow:
                 'query_analysis': query_analysis
             }
         
-        # Check if query is complex and needs planning
+        # Use V2 planner for intelligent query planning
         report_progress("Planning query...")
-        query_plan = self.planner.plan_query(query)
+        query_plan = self.planner_v2.plan_query(query)
         
-        # If complex query with subqueries, execute multi-step retrieval
-        if query_plan['complexity'] == 'complex' and query_plan.get('subqueries'):
-            return self._execute_complex_query(query, query_plan, query_analysis, strict_local, allow_web_search, start_time, report_progress)
+        # Handle based on plan mode
+        if query_plan['mode'] == 'direct_llm':
+            # Direct LLM answer (simple queries, noise, etc.)
+            report_progress("Generating answer (direct LLM)...")
+            language = self.simple_detector.detect_language(query)
+            answer = self.llm_router.answer_direct(query, language=language)
+            
+            end_time = datetime.now()
+            latency_ms = (end_time - start_time).total_seconds() * 1000
+            
+            return {
+                'query': query,
+                'answer': answer,
+                'routing': {
+                    'sources': [],
+                    'reasoning': query_plan.get('reason', 'Direct LLM mode'),
+                    'query': query
+                },
+                'sources_used': [],
+                'tool_results': {},
+                'failed_tools': [],
+                'context_count': 0,
+                'citations': [],
+                'latency_ms': latency_ms,
+                'timestamp': end_time.isoformat(),
+                'fast_path': True,
+                'query_plan': query_plan
+            }
         
+        # Execute retrieval-based queries with V2 workflow (includes evaluation loop)
+        if query_plan['mode'] in ['single_retrieval', 'multi_retrieval']:
+            return self._execute_v2_workflow(query, query_plan, query_analysis, strict_local, allow_web_search, start_time, report_progress)
+        
+        # Fallback to old routing if plan mode is unexpected
         report_progress("Routing query...")
         
         if strict_local:
@@ -577,6 +609,240 @@ class RAGWorkflow:
             'timestamp': end_time.isoformat(),
             'query_analysis': query_analysis
         }
+    
+    def _execute_v2_workflow(self, query: str, query_plan: Dict[str, Any], query_analysis: Dict[str, Any], strict_local: bool, allow_web_search: bool, start_time: datetime, report_progress: Callable[[str], None]) -> Dict[str, Any]:
+        """
+        Execute V2 workflow with planner + retrieval + evaluator + optional refinement.
+        
+        Args:
+            query: Original user query
+            query_plan: Plan from planner_v2
+            query_analysis: Query analysis results
+            strict_local: Whether to use only local KB
+            allow_web_search: Whether web search is allowed
+            start_time: Query start time
+            report_progress: Progress callback function
+            
+        Returns:
+            Complete query result with evaluation metadata
+        """
+        max_iterations = 2
+        iteration = 1
+        
+        all_subqueries = query_plan.get('subqueries', [])
+        
+        # First pass: execute all subqueries from planner
+        all_context, tool_results, failed_tools, sources_used = self._execute_subqueries(
+            all_subqueries, query_analysis, allow_web_search, report_progress, iteration
+        )
+        
+        # Synthesize answer from first pass
+        report_progress("Synthesizing answer...")
+        language = self.simple_detector.detect_language(query)
+        context_text = self._build_context_text(all_context)
+        
+        answer = self.llm_router.synthesize_answer(
+            query=query,
+            context=context_text,
+            language=language,
+            query_type='factual',
+            strict_grounding=True
+        )
+        
+        # Evaluate answer completeness
+        report_progress("Evaluating answer completeness...")
+        evidence_summary = self._build_evidence_summary(all_context, tool_results)
+        evaluation = self.evaluator.evaluate(query, answer, evidence_summary)
+        
+        # If incomplete and we have follow-up queries, do second pass
+        if not evaluation.get('complete', True) and evaluation.get('followup_subqueries') and iteration < max_iterations:
+            iteration += 1
+            report_progress(f"Answer incomplete, executing follow-up queries (pass {iteration})...")
+            
+            followup_subqueries = evaluation['followup_subqueries']
+            
+            # Execute follow-up subqueries
+            followup_context, followup_tool_results, followup_failed, followup_sources = self._execute_subqueries(
+                followup_subqueries, query_analysis, allow_web_search, report_progress, iteration
+            )
+            
+            # Merge with existing context
+            all_context.extend(followup_context)
+            tool_results.update(followup_tool_results)
+            failed_tools.extend(followup_failed)
+            sources_used.update(followup_sources)
+            
+            # Re-synthesize with expanded context
+            report_progress("Re-synthesizing answer with additional information...")
+            context_text = self._build_context_text(all_context)
+            
+            answer = self.llm_router.synthesize_answer(
+                query=query,
+                context=context_text,
+                language=language,
+                query_type='factual',
+                strict_grounding=True
+            )
+            
+            # Re-evaluate (for metadata only, don't iterate further)
+            evidence_summary = self._build_evidence_summary(all_context, tool_results)
+            evaluation = self.evaluator.evaluate(query, answer, evidence_summary)
+        
+        # Build citations
+        citations = self._build_citations(all_context)
+        
+        end_time = datetime.now()
+        latency_ms = (end_time - start_time).total_seconds() * 1000
+        
+        return {
+            'query': query,
+            'answer': answer,
+            'routing': {
+                'sources': list(sources_used),
+                'reasoning': query_plan.get('reason', 'V2 workflow with evaluation'),
+                'query': query,
+                'plan': query_plan
+            },
+            'sources_used': list(sources_used),
+            'tool_results': tool_results,
+            'failed_tools': failed_tools,
+            'context_count': len(all_context),
+            'citations': citations,
+            'latency_ms': latency_ms,
+            'timestamp': end_time.isoformat(),
+            'query_analysis': query_analysis,
+            'query_plan': query_plan,
+            'evaluation': evaluation,
+            'iterations': iteration,
+            'v2_workflow': True
+        }
+    
+    def _execute_subqueries(self, subqueries: List[Dict[str, Any]], query_analysis: Dict[str, Any], allow_web_search: bool, report_progress: Callable[[str], None], iteration: int) -> tuple:
+        """Execute a list of subqueries and return combined results"""
+        all_context = []
+        tool_results = {}
+        failed_tools = []
+        sources_used = set()
+        
+        for i, subquery_info in enumerate(subqueries):
+            subquery_id = subquery_info.get('id', f'sq{i+1}')
+            subquery_text = subquery_info.get('query', '')
+            tool = subquery_info.get('tool', 'web_search')
+            
+            report_progress(f"Pass {iteration}: Executing subquery {i+1}/{len(subqueries)} ({tool})...")
+            
+            try:
+                if tool == 'web_search' and allow_web_search:
+                    results = self.web_search_tool.search(subquery_text, max_results=5)
+                    if results and 'results' in results:
+                        for result in results['results']:
+                            all_context.append({
+                                'text': result.get('content', result.get('snippet', '')),
+                                'source': 'web_search',
+                                'url': result.get('url', ''),
+                                'title': result.get('title', ''),
+                                'domain': result.get('domain', ''),
+                                'credibility_score': result.get('credibility_score', 0.5),
+                                'final_score': result.get('final_score', 0.5),
+                                'subquery_id': subquery_id
+                            })
+                        tool_results[f'web_search_{subquery_id}'] = results
+                        sources_used.add('web_search')
+                
+                elif tool == 'weather':
+                    location = self._extract_location(subquery_text) or query_analysis.get('location', 'Hong Kong')
+                    weather_results = self._handle_weather(subquery_text, location=location)
+                    if weather_results and 'error' not in weather_results:
+                        weather_text = self._format_weather_for_context(weather_results)
+                        all_context.append({
+                            'text': weather_text,
+                            'source': 'weather',
+                            'credibility_score': 0.95,
+                            'final_score': 0.9,
+                            'subquery_id': subquery_id
+                        })
+                        tool_results[f'weather_{subquery_id}'] = weather_results
+                        sources_used.add('weather')
+                
+                elif tool == 'finance':
+                    finance_results = self._handle_finance(subquery_text)
+                    if finance_results and 'error' not in finance_results:
+                        tool_results[f'finance_{subquery_id}'] = finance_results
+                        sources_used.add('finance')
+                
+                elif tool == 'transport':
+                    locations = self._extract_locations(subquery_text)
+                    if len(locations) >= 2:
+                        transport_results = self._handle_transport(subquery_text, origin=locations[0], destination=locations[1])
+                        if transport_results and 'error' not in transport_results:
+                            transport_text = self._format_transport_for_context(transport_results)
+                            all_context.append({
+                                'text': transport_text,
+                                'source': 'transport',
+                                'credibility_score': 0.95,
+                                'final_score': 0.9,
+                                'subquery_id': subquery_id
+                            })
+                            tool_results[f'transport_{subquery_id}'] = transport_results
+                            sources_used.add('transport')
+                
+                elif tool == 'time':
+                    time_results = self._handle_time(subquery_text)
+                    if time_results and 'error' not in time_results:
+                        time_text = self._format_time_for_context(time_results)
+                        all_context.append({
+                            'text': time_text,
+                            'source': 'time',
+                            'credibility_score': 1.0,
+                            'final_score': 1.0,
+                            'subquery_id': subquery_id
+                        })
+                        tool_results[f'time_{subquery_id}'] = time_results
+                        sources_used.add('time')
+                
+                elif tool == 'kb':
+                    kb_results = self.retrieval.hybrid_search(subquery_text, top_k=5)
+                    for doc in kb_results:
+                        all_context.append({
+                            'text': doc['text'],
+                            'source': 'local_knowledge_base',
+                            'metadata': doc.get('metadata', {}),
+                            'score': doc.get('score', 0.5),
+                            'final_score': doc.get('score', 0.5),
+                            'subquery_id': subquery_id
+                        })
+                    sources_used.add('local_knowledge_base')
+                    
+            except Exception as e:
+                print(f"Error executing subquery {subquery_id} ({tool}): {e}")
+                failed_tools.append(f"{tool}_{subquery_id}")
+        
+        # Sort context by final_score
+        all_context.sort(key=lambda x: x.get('final_score', 0), reverse=True)
+        
+        return all_context, tool_results, failed_tools, sources_used
+    
+    def _build_context_text(self, all_context: List[Dict[str, Any]]) -> str:
+        """Build formatted context text from context list"""
+        context_text = ""
+        for i, ctx in enumerate(all_context[:20]):  # Top 20 contexts
+            subquery_id = ctx.get('subquery_id', '')
+            context_text += f"\n[{i+1}] "
+            if subquery_id:
+                context_text += f"[Subquery: {subquery_id}] "
+            context_text += f"[Source: {ctx.get('source', 'unknown')}]\n"
+            context_text += f"{ctx.get('text', '')}\n"
+        return context_text
+    
+    def _build_evidence_summary(self, all_context: List[Dict[str, Any]], tool_results: Dict[str, Any]) -> str:
+        """Build a brief evidence summary for evaluator"""
+        sources = set()
+        for ctx in all_context[:10]:
+            sources.add(ctx.get('source', 'unknown'))
+        
+        summary = f"Retrieved information from {len(all_context)} sources: {', '.join(sources)}\n"
+        summary += f"Tools used: {', '.join(tool_results.keys())}"
+        return summary
     
     def _execute_complex_query(self, query: str, query_plan: Dict[str, Any], query_analysis: Dict[str, Any], strict_local: bool, allow_web_search: bool, start_time: datetime, report_progress: Callable[[str], None]) -> Dict[str, Any]:
         """
