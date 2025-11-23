@@ -217,6 +217,30 @@ class RAGWorkflow:
             sources.append('finance')
             routing['reasoning'] += ' (finance added via keyword detection)'
         
+        # Time keywords (highest priority - should never use web search)
+        time_keywords = [
+            'what time', 'current time', 'time now', 'time right now', 'local time',
+            'what\'s the time', 'tell me the time', 'time in', 'time at',
+            '現在幾點', '现在几点', '現在時間', '现在时间', '當前時間', '当前时间'
+        ]
+        if any(kw in query_lower for kw in time_keywords):
+            # For time queries, ONLY use time tool (no web search, no other tools)
+            sources = ['time']
+            routing['sources'] = ['time']
+            routing['reasoning'] = 'Time query detected - using time API only (no web search needed)'
+        
+        # Weather keywords (including air quality, AQHI, etc.)
+        weather_keywords = [
+            'weather', 'forecast', 'temperature', 'rain', 'snow', 'uv', 'ultraviolet',
+            'air quality', 'aqhi', 'aqi', 'humidity', 'wind',
+            '天氣', '天气', '氣溫', '气温', '降雨', '紫外線', '紫外线', 
+            '空氣質素', '空气质素', '空氣品質', '空气品质', '濕度', '湿度'
+        ]
+        # Only add weather if not a time query (to avoid confusion)
+        if any(kw in query_lower for kw in weather_keywords) and 'weather' not in sources and not self._is_time_query(query):
+            sources.append('weather')
+            routing['reasoning'] += ' (weather added via keyword detection)'
+        
         all_context = []
         tool_results = {}
         failed_tools = []
@@ -361,28 +385,34 @@ class RAGWorkflow:
             
             # Check if we have rich domain context from specialized tools
             has_domain_context = any(
-                doc.get('source') in {'finance', 'weather', 'transport', 'finance_web_extraction'}
+                doc.get('source') in {'finance', 'weather', 'transport', 'finance_web_extraction', 'time'}
                 for doc in all_context
             )
             
             # Check if query needs extra info beyond domain tools (AQHI, hiking trails, etc.)
             needs_extra_info = any(kw in query.lower() for kw in [
                 'aqhi', 'air quality', '空氣質素', '空气质素',
-                'trail', 'hiking', '遠足', '远足', '行山', 'route', '路線', '路线'
+                'trail', 'hiking', '遠足', '远足', '行山', 'safety', 'safe'
             ])
+            
+            # Check if this is a time query (should never use web search)
+            is_time_query = self._is_time_query(query)
             
             # Only use web search when:
             # 1. User allows web search (allow_web_search=True), AND
-            # 2. One of these conditions:
+            # 2. NOT a time query (time queries should never use web search), AND
+            # 3. One of these conditions:
             #    a. Router explicitly requested it, OR
             #    b. Domain tools failed (need fallback), OR
             #    c. KB is insufficient AND we don't have domain context, OR
             #    d. Query needs extra info beyond what domain tools provide
             should_use_web_search = (
-                'web_search' in sources or
-                len(failed_tools) > 0 or
-                (kb_docs_count < min_kb_threshold and not has_domain_context) or
-                needs_extra_info
+                not is_time_query and (
+                    'web_search' in sources or
+                    len(failed_tools) > 0 or
+                    (kb_docs_count < min_kb_threshold and not has_domain_context) or
+                    needs_extra_info
+                )
             )
             
             if allow_web_search and should_use_web_search and not fast_mode:
@@ -783,7 +813,7 @@ class RAGWorkflow:
             source = doc.get('source', '')
             
             # Trust structured tool outputs
-            if source in {'weather', 'finance', 'transport', 'finance_web_extraction'}:
+            if source in {'weather', 'finance', 'transport', 'finance_web_extraction', 'time'}:
                 return True
             
             # Check if we have a good score from retrieval/reranking

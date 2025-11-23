@@ -8,8 +8,8 @@ A production-ready RAG (Retrieval Augmented Generation) system with hybrid retri
 - **Hybrid Retrieval**: Combines dense (Qdrant) and sparse (Elasticsearch BM25) retrieval with Reciprocal Rank Fusion (RRF)
 - **Advanced Reranking**: Cross-encoder reranking with freshness and credibility scoring
 - **Intelligent Routing**: LLM-based source selection using DeepSeek with optimized API usage
-- **Optimized Web Search**: Google Custom Search integration with smart routing to reduce unnecessary API calls
-- **Domain-Specific Tools**: Weather (Open-Meteo), finance (yfinance + Alpha Vantage with intraday support), transport, and web search integrations
+- **Optimized Web Search**: Tavily API (primary) with Google Custom Search fallback, smart routing to reduce unnecessary API calls
+- **Domain-Specific Tools**: Time (WorldTimeAPI), Weather (WeatherAPI.com), Finance (Alpha Vantage), Transport (HERE Transit API), Vision (Gemini 2.5 Flash Lite)
 - **Multimodal Support**: PDF, HTML, Office documents, images (OCR), audio (Whisper transcription)
 - **Document Attachments**: Attach files directly to queries without indexing them into the knowledge base
 - **Audio Transcription**: Support for audio files (MP3, WAV, M4A, OGG, FLAC, WEBM) using Whisper
