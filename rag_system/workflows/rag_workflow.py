@@ -9,6 +9,7 @@ from rag_system.core.config import get_config
 from rag_system.workflows.llm_router import get_llm_router
 from rag_system.workflows.simple_detector import get_simple_detector
 from rag_system.workflows.attachment_handler import get_attachment_handler
+from rag_system.workflows.planner import get_planner
 from rag_system.services.hybrid_retrieval import get_hybrid_retrieval_service
 from rag_system.tools.weather import get_weather_tool
 from rag_system.tools.finance import get_finance_tool
@@ -47,6 +48,7 @@ class RAGWorkflow:
         self.llm_router = get_llm_router()
         self.simple_detector = get_simple_detector()
         self.attachment_handler = get_attachment_handler()
+        self.planner = get_planner()
         self.retrieval = get_hybrid_retrieval_service()
         self.weather_tool = get_weather_tool()
         self.finance_tool = get_finance_tool()
@@ -175,6 +177,14 @@ class RAGWorkflow:
                 'fast_path': True,
                 'query_analysis': query_analysis
             }
+        
+        # Check if query is complex and needs planning
+        report_progress("Planning query...")
+        query_plan = self.planner.plan_query(query)
+        
+        # If complex query with subqueries, execute multi-step retrieval
+        if query_plan['complexity'] == 'complex' and query_plan.get('subqueries'):
+            return self._execute_complex_query(query, query_plan, query_analysis, strict_local, allow_web_search, start_time, report_progress)
         
         report_progress("Routing query...")
         
@@ -566,6 +576,173 @@ class RAGWorkflow:
             'latency_ms': latency_ms,
             'timestamp': end_time.isoformat(),
             'query_analysis': query_analysis
+        }
+    
+    def _execute_complex_query(self, query: str, query_plan: Dict[str, Any], query_analysis: Dict[str, Any], strict_local: bool, allow_web_search: bool, start_time: datetime, report_progress: Callable[[str], None]) -> Dict[str, Any]:
+        """
+        Execute a complex query with multi-step retrieval based on the query plan.
+        
+        Args:
+            query: Original user query
+            query_plan: Plan with subqueries from the planner
+            query_analysis: Query analysis results
+            strict_local: Whether to use only local KB
+            allow_web_search: Whether web search is allowed
+            start_time: Query start time
+            report_progress: Progress callback function
+            
+        Returns:
+            Complete query result with combined contexts
+        """
+        all_context = []
+        tool_results = {}
+        failed_tools = []
+        sources_used = set()
+        
+        # Execute each subquery
+        for i, subquery_info in enumerate(query_plan['subqueries']):
+            subquery_id = subquery_info.get('id', f'sq{i+1}')
+            subquery_text = subquery_info.get('query', '')
+            domain = subquery_info.get('domain', 'web_search')
+            
+            report_progress(f"Executing subquery {i+1}/{len(query_plan['subqueries'])}: {domain}...")
+            
+            try:
+                # Execute based on domain
+                if domain == 'web_search' and allow_web_search:
+                    results = self.web_search_tool.search(subquery_text, max_results=5)
+                    if results and 'results' in results:
+                        for result in results['results']:
+                            all_context.append({
+                                'text': result.get('content', result.get('snippet', '')),
+                                'source': 'web_search',
+                                'url': result.get('url', ''),
+                                'title': result.get('title', ''),
+                                'domain': result.get('domain', ''),
+                                'credibility_score': result.get('credibility_score', 0.5),
+                                'final_score': result.get('final_score', 0.5),
+                                'subquery_id': subquery_id
+                            })
+                        tool_results[f'web_search_{subquery_id}'] = results
+                        sources_used.add('web_search')
+                
+                elif domain == 'weather':
+                    location = self._extract_location(subquery_text) or query_analysis.get('location', 'Hong Kong')
+                    weather_results = self._handle_weather(subquery_text, location=location)
+                    if weather_results and 'error' not in weather_results:
+                        weather_text = self._format_weather_for_context(weather_results)
+                        all_context.append({
+                            'text': weather_text,
+                            'source': 'weather',
+                            'credibility_score': 0.95,
+                            'final_score': 0.9,
+                            'subquery_id': subquery_id
+                        })
+                        tool_results[f'weather_{subquery_id}'] = weather_results
+                        sources_used.add('weather')
+                
+                elif domain == 'finance':
+                    finance_results = self._handle_finance(subquery_text)
+                    if finance_results and 'error' not in finance_results:
+                        tool_results[f'finance_{subquery_id}'] = finance_results
+                        sources_used.add('finance')
+                
+                elif domain == 'transport':
+                    locations = self._extract_locations(subquery_text)
+                    if len(locations) >= 2:
+                        transport_results = self._handle_transport(subquery_text, origin=locations[0], destination=locations[1])
+                        if transport_results and 'error' not in transport_results:
+                            transport_text = self._format_transport_for_context(transport_results)
+                            all_context.append({
+                                'text': transport_text,
+                                'source': 'transport',
+                                'credibility_score': 0.95,
+                                'final_score': 0.9,
+                                'subquery_id': subquery_id
+                            })
+                            tool_results[f'transport_{subquery_id}'] = transport_results
+                            sources_used.add('transport')
+                
+                elif domain == 'time':
+                    time_results = self._handle_time(subquery_text)
+                    if time_results and 'error' not in time_results:
+                        time_text = self._format_time_for_context(time_results)
+                        all_context.append({
+                            'text': time_text,
+                            'source': 'time',
+                            'credibility_score': 1.0,
+                            'final_score': 1.0,
+                            'subquery_id': subquery_id
+                        })
+                        tool_results[f'time_{subquery_id}'] = time_results
+                        sources_used.add('time')
+                
+                elif domain == 'kb' and not strict_local:
+                    # Retrieve from knowledge base for this subquery
+                    kb_results = self.retrieval.hybrid_search(subquery_text, top_k=5)
+                    for doc in kb_results:
+                        all_context.append({
+                            'text': doc['text'],
+                            'source': 'local_knowledge_base',
+                            'metadata': doc.get('metadata', {}),
+                            'score': doc.get('score', 0.5),
+                            'final_score': doc.get('score', 0.5),
+                            'subquery_id': subquery_id
+                        })
+                    sources_used.add('local_knowledge_base')
+                    
+            except Exception as e:
+                print(f"Error executing subquery {subquery_id} ({domain}): {e}")
+                failed_tools.append(f"{domain}_{subquery_id}")
+        
+        # Sort context by final_score
+        all_context.sort(key=lambda x: x.get('final_score', 0), reverse=True)
+        
+        # Synthesize final answer
+        report_progress("Synthesizing answer from multiple sources...")
+        language = self.simple_detector.detect_language(query)
+        
+        # Build context text with subquery information
+        context_text = ""
+        for ctx in all_context[:20]:  # Top 20 contexts
+            subquery_id = ctx.get('subquery_id', '')
+            context_text += f"\n[Source: {ctx.get('source', 'unknown')}]"
+            if subquery_id:
+                context_text += f" [Subquery: {subquery_id}]"
+            context_text += f"\n{ctx.get('text', '')}\n"
+        
+        answer = self.llm_router.synthesize_answer(
+            query=query,
+            context=context_text,
+            language=language,
+            query_type='factual'
+        )
+        
+        # Build citations
+        citations = self._build_citations(all_context)
+        
+        end_time = datetime.now()
+        latency_ms = (end_time - start_time).total_seconds() * 1000
+        
+        return {
+            'query': query,
+            'answer': answer,
+            'routing': {
+                'sources': list(sources_used),
+                'reasoning': f'Complex query with {len(query_plan["subqueries"])} subqueries',
+                'query': query,
+                'plan': query_plan
+            },
+            'sources_used': list(sources_used),
+            'tool_results': tool_results,
+            'failed_tools': failed_tools,
+            'context_count': len(all_context),
+            'citations': citations,
+            'latency_ms': latency_ms,
+            'timestamp': end_time.isoformat(),
+            'query_analysis': query_analysis,
+            'query_plan': query_plan,
+            'complex_query': True
         }
     
     def _handle_finance(self, query: str) -> Dict[str, Any]:

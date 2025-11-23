@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
-import { Send, Loader2, AlertCircle, CheckCircle2, Database, Globe, Zap, RotateCcw, Upload, Link as LinkIcon, ChevronDown, ChevronUp, MessageSquare, FolderOpen, Activity } from 'lucide-react'
+import { Send, Loader2, AlertCircle, CheckCircle2, Database, Globe, Zap, RotateCcw, Upload, Link as LinkIcon, ChevronDown, ChevronUp, MessageSquare, FolderOpen, Activity, Paperclip, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -53,6 +53,8 @@ function App() {
   const [ingesting, setIngesting] = useState(false)
   const [ingestMessage, setIngestMessage] = useState<string | null>(null)
   const [statusDialogOpen, setStatusDialogOpen] = useState(false)
+  const [chatAttachments, setChatAttachments] = useState<FileList | null>(null)
+  const [attachmentPreviews, setAttachmentPreviews] = useState<string[]>([])
 
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -94,21 +96,47 @@ function App() {
 
     const userMessage: Message = { role: 'user', content: input }
     setMessages(prev => [...prev, userMessage])
+    const queryText = input
     setInput('')
     setLoading(true)
     setError(null)
 
     try {
-      const response = await fetch(`${API_URL}/api/ask`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: input,
-          strict_local: strictLocal,
-          fast: false,
-          web_search: webSearchEnabled
+      let response;
+      
+      // Use attachments endpoint if files are attached
+      if (chatAttachments && chatAttachments.length > 0) {
+        const formData = new FormData()
+        formData.append('query', queryText)
+        formData.append('strict_local', String(strictLocal))
+        formData.append('fast', 'false')
+        formData.append('web_search', String(webSearchEnabled))
+        
+        Array.from(chatAttachments).forEach(file => {
+          formData.append('files', file)
         })
-      })
+        
+        response = await fetch(`${API_URL}/api/ask_with_attachments`, {
+          method: 'POST',
+          body: formData
+        })
+        
+        // Clear attachments after sending
+        setChatAttachments(null)
+        setAttachmentPreviews([])
+      } else {
+        // Regular query without attachments
+        response = await fetch(`${API_URL}/api/ask`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query: queryText,
+            strict_local: strictLocal,
+            fast: false,
+            web_search: webSearchEnabled
+          })
+        })
+      }
 
       if (!response.ok) {
         const errorData = await response.json()
@@ -208,6 +236,26 @@ function App() {
 
   const toggleDetails = (index: number) => {
     setExpandedDetails(expandedDetails === index ? null : index)
+  }
+
+  const handleChatFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (files && files.length > 0) {
+      setChatAttachments(files)
+      // Generate preview names
+      const names = Array.from(files).map(f => f.name)
+      setAttachmentPreviews(names)
+    }
+  }
+
+  const removeChatAttachment = (index: number) => {
+    if (!chatAttachments) return
+    const dt = new DataTransfer()
+    Array.from(chatAttachments).forEach((file, i) => {
+      if (i !== index) dt.items.add(file)
+    })
+    setChatAttachments(dt.files.length > 0 ? dt.files : null)
+    setAttachmentPreviews(prev => prev.filter((_, i) => i !== index))
   }
 
   const renderToolDetails = (toolResults: any, sources: string[]) => {
@@ -555,13 +603,38 @@ function App() {
 
                 <Card>
                   <CardContent className="p-4">
-                    <form onSubmit={handleSubmit} className="flex gap-2">
-                      <Textarea value={input} onChange={(e) => setInput(e.target.value)} placeholder="Ask me anything..." className="min-h-[60px] resize-none" onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(e) } }} />
-                      <Button type="submit" disabled={loading || !input.trim()} className="self-end">
-                        {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                      </Button>
+                    <form onSubmit={handleSubmit} className="space-y-2">
+                      {attachmentPreviews.length > 0 && (
+                        <div className="flex flex-wrap gap-2 p-2 bg-slate-50 rounded border border-slate-200">
+                          {attachmentPreviews.map((name, i) => (
+                            <div key={i} className="flex items-center gap-1 bg-white px-2 py-1 rounded border border-slate-300 text-xs">
+                              <Paperclip className="w-3 h-3" />
+                              <span className="max-w-[150px] truncate">{name}</span>
+                              <button type="button" onClick={() => removeChatAttachment(i)} className="hover:bg-slate-100 rounded p-0.5">
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="flex gap-2">
+                        <Textarea value={input} onChange={(e) => setInput(e.target.value)} placeholder="Ask me anything... You can also attach images, PDFs, audio files, etc." className="min-h-[60px] resize-none" onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(e) } }} />
+                        <div className="flex flex-col gap-2">
+                          <label htmlFor="chat-file-upload" className="cursor-pointer">
+                            <div className="flex items-center justify-center w-10 h-10 rounded-lg border-2 border-dashed border-slate-300 hover:border-slate-400 hover:bg-slate-50 transition-colors">
+                              <Paperclip className="w-4 h-4 text-slate-600" />
+                            </div>
+                          </label>
+                          <input id="chat-file-upload" type="file" multiple onChange={handleChatFileSelect} className="hidden" accept="image/*,.pdf,.docx,.doc,.txt,.md,.mp3,.wav,.m4a,.csv,.xlsx,.xls" />
+                          <Button type="submit" disabled={loading || !input.trim()} className="w-10 h-10">
+                            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                          </Button>
+                        </div>
+                      </div>
                     </form>
-                    <p className="text-xs text-slate-500 mt-2">Press Enter to send, Shift+Enter for new line</p>
+                    <p className="text-xs text-slate-500 mt-2">
+                      Press Enter to send, Shift+Enter for new line. Click 📎 to attach files (images, PDFs, audio, etc.)
+                    </p>
                   </CardContent>
                 </Card>
               </div>
