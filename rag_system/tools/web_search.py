@@ -102,13 +102,13 @@ class WebSearchTool:
             url = "https://api.tavily.com/search"
             headers = {'Content-Type': 'application/json'}
             
-            # Build Tavily request
+            # Build Tavily request with advanced features
             data = {
                 'api_key': self.tavily_api_key,
                 'query': query,
-                'search_depth': 'basic',  # Fast mode, good quality
+                'search_depth': 'advanced',  # Advanced mode for better quality
                 'max_results': max_results,
-                'include_answer': False,  # Let our LLM synthesize
+                'include_answer': True,  # Use Tavily's high-quality answer synthesis
                 'include_raw_content': False  # Snippets are sufficient
             }
             
@@ -153,11 +153,18 @@ class WebSearchTool:
             if filters and filters.get('preferred_domains') and not filters.get('must_domains'):
                 results = self._apply_filters(results, filters)
             
-            return {
+            # Capture Tavily's answer field if present
+            response_data = {
                 'query': query,
                 'results': results,
                 'provider': 'tavily'
             }
+            
+            # Include Tavily's synthesized answer if available
+            if 'answer' in tavily_result and tavily_result['answer']:
+                response_data['answer'] = tavily_result['answer']
+            
+            return response_data
         except Exception as e:
             return {'error': str(e), 'query': query, 'results': [], 'provider': 'tavily'}
     

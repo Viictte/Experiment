@@ -326,14 +326,26 @@ class RAGWorkflow:
                 # Use location from query analysis if available
                 location = query_analysis.get('location', '')
                 
+                # Check if this is an air quality query
+                air_quality_keywords = ['air quality', 'aqhi', 'aqi', '空氣質素', '空气质素', '空氣品質', '空气品质']
+                is_air_quality_query = any(kw in query.lower() for kw in air_quality_keywords)
+                
                 # Check cache first for consistency
                 from rag_system.services.redis_service import get_redis_service
                 redis = get_redis_service()
-                cache_params = {'query': query, 'location': location, 'tool': 'weather'}
+                cache_params = {'query': query, 'location': location, 'tool': 'weather', 'air_quality': is_air_quality_query}
                 cached_result = redis.get_tool_cache('weather', cache_params)
                 
                 if cached_result:
                     weather_results = cached_result
+                elif is_air_quality_query:
+                    # Try Google Air Quality API first for air quality queries
+                    weather_results = self.weather_tool.get_air_quality(location)
+                    if 'error' in weather_results:
+                        # Fallback to regular weather API
+                        weather_results = self._handle_weather(query, location=location)
+                    # Cache for 10 minutes (600 seconds)
+                    redis.set_tool_cache('weather', cache_params, weather_results, ttl=600)
                 else:
                     weather_results = self._handle_weather(query, location=location)
                     # Cache for 10 minutes (600 seconds) - weather changes slowly
@@ -341,7 +353,22 @@ class RAGWorkflow:
                 
                 tool_results['weather'] = weather_results
                 domain_tools_used.append('weather')
-                if 'data' in weather_results and weather_results['data']:
+                
+                if is_air_quality_query and 'aqi' in weather_results:
+                    # Format air quality data for context
+                    aq_text = f"Air Quality for {location}:\n"
+                    aq_text += f"AQI: {weather_results.get('aqi_display', 'N/A')}\n"
+                    aq_text += f"Category: {weather_results.get('category', 'N/A')}\n"
+                    aq_text += f"Dominant Pollutant: {weather_results.get('dominant_pollutant', 'N/A')}\n"
+                    if weather_results.get('health_recommendations'):
+                        aq_text += f"Health Recommendations: {weather_results['health_recommendations']}\n"
+                    all_context.append({
+                        'text': aq_text,
+                        'source': 'weather',
+                        'credibility_score': 0.95,
+                        'final_score': 0.9
+                    })
+                elif 'data' in weather_results and weather_results['data']:
                     # Format weather data in a structured, readable way
                     weather_text = self._format_weather_for_context(weather_results)
                     all_context.append({
@@ -445,6 +472,19 @@ class RAGWorkflow:
                     filters['blocked_domains'].extend(['reddit.com', 'facebook.com', 'quora.com', 'instagram.com', 'youtube.com'])
                 
                 web_results = self.web_search_tool.search(search_query, max_results=5, filters=filters)
+                
+                # If Tavily returned a synthesized answer, add it as highest-priority context
+                if 'answer' in web_results and web_results['answer']:
+                    all_context.append({
+                        'text': web_results['answer'],
+                        'source': 'web_search',
+                        'url': '',
+                        'title': 'Tavily AI Answer',
+                        'domain': 'tavily.com',
+                        'credibility_score': 1.0,  # Highest credibility for Tavily's answer
+                        'final_score': 1.0
+                    })
+                
                 if 'results' in web_results:
                     for result in web_results['results']:
                         # Handle both Google (uses 'url') and Tavily (uses 'url') formats

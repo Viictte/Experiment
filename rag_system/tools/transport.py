@@ -1,4 +1,4 @@
-"""Transport tool using HERE Transit API"""
+"""Transport tool using Google Directions API with HERE fallback"""
 
 from typing import Dict, Any, Optional, List
 import requests
@@ -10,28 +10,138 @@ class TransportTool:
     def __init__(self):
         self.config = get_config()
         self.enabled = self.config.get('tools.transport.enabled', True)
-        self.api_key = self.config.get('tools.transport.api_key') or os.getenv('HERE_API_KEY')
-        self.transit_url = "https://transit.router.hereapi.com/v8/routes"
-        self.geocode_url = "https://geocode.search.hereapi.com/v1/geocode"
+        
+        # Prefer Google Directions over HERE
+        self.google_api_key = os.getenv('GOOGLE_DIRECTIONS_API_KEY')
+        self.here_api_key = self.config.get('tools.transport.api_key') or os.getenv('HERE_API_KEY')
+        
+        if self.google_api_key:
+            self.provider = 'google'
+            self.api_key = self.google_api_key
+        elif self.here_api_key:
+            self.provider = 'here'
+            self.api_key = self.here_api_key
+            self.transit_url = "https://transit.router.hereapi.com/v8/routes"
+            self.geocode_url = "https://geocode.search.hereapi.com/v1/geocode"
+        else:
+            self.provider = None
+            self.api_key = None
     
     def get_route(self, origin: str, destination: str, mode: str = 'transit') -> Dict[str, Any]:
         """
-        Get route from origin to destination using HERE Transit API.
+        Get route from origin to destination using Google Directions API (primary) or HERE (fallback).
         
         Args:
             origin: Starting location (e.g., "K11 MUSEA")
             destination: Destination location (e.g., "HKUST")
-            mode: Travel mode - 'transit' (public transport), 'car', 'pedestrian'
+            mode: Travel mode - 'transit' (public transport), 'driving', 'walking', 'bicycling'
         
         Returns:
-            Dict with route information including steps, duration, distance
+            Dict with route information including steps, duration, distance, legs
         """
         if not self.enabled:
             return {'error': 'Transport tool is disabled'}
         
         if not self.api_key:
-            return {'error': 'HERE API key not configured'}
+            return {'error': 'No transport API key configured (need GOOGLE_DIRECTIONS_API_KEY or HERE_API_KEY)'}
         
+        try:
+            if self.provider == 'google':
+                return self._get_google_route(origin, destination, mode)
+            else:
+                return self._get_here_route(origin, destination, mode)
+        except Exception as e:
+            return {'error': str(e)}
+    
+    def _get_google_route(self, origin: str, destination: str, mode: str = 'transit') -> Dict[str, Any]:
+        """Get route using Google Directions API"""
+        try:
+            url = "https://maps.googleapis.com/maps/api/directions/json"
+            params = {
+                'origin': origin,
+                'destination': destination,
+                'mode': mode,
+                'key': self.google_api_key,
+                'language': 'zh-CN',  # Chinese for better Hong Kong support
+                'alternatives': 'true'  # Get multiple route options
+            }
+            
+            response = requests.get(url, params=params, timeout=15)
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            if data.get('status') != 'OK':
+                return {'error': f"Google Directions API error: {data.get('status')} - {data.get('error_message', 'Unknown error')}"}
+            
+            # Parse all routes
+            routes = []
+            for route in data.get('routes', []):
+                route_info = self._parse_google_route(route)
+                routes.append(route_info)
+            
+            return {
+                'origin': origin,
+                'destination': destination,
+                'mode': mode,
+                'routes': routes,
+                'provider': 'google',
+                'status': 'success'
+            }
+        except Exception as e:
+            return {'error': str(e)}
+    
+    def _parse_google_route(self, route: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse a single route from Google Directions API"""
+        legs = route.get('legs', [])
+        if not legs:
+            return {'error': 'No legs found in route'}
+        
+        # Parse all legs (for multi-waypoint routes)
+        parsed_legs = []
+        for leg in legs:
+            steps = []
+            for step in leg.get('steps', []):
+                step_info = {
+                    'instruction': step.get('html_instructions', '').replace('<b>', '').replace('</b>', '').replace('<div>', ' ').replace('</div>', ''),
+                    'distance': step.get('distance', {}).get('text', ''),
+                    'duration': step.get('duration', {}).get('text', ''),
+                    'travel_mode': step.get('travel_mode', '')
+                }
+                
+                # For transit, add detailed transit information
+                if 'transit_details' in step:
+                    transit = step['transit_details']
+                    step_info['transit'] = {
+                        'line': transit.get('line', {}).get('short_name', transit.get('line', {}).get('name', '')),
+                        'vehicle': transit.get('line', {}).get('vehicle', {}).get('name', ''),
+                        'departure_stop': transit.get('departure_stop', {}).get('name', ''),
+                        'arrival_stop': transit.get('arrival_stop', {}).get('name', ''),
+                        'num_stops': transit.get('num_stops', 0),
+                        'headsign': transit.get('headsign', ''),
+                        'departure_time': transit.get('departure_time', {}).get('text', ''),
+                        'arrival_time': transit.get('arrival_time', {}).get('text', '')
+                    }
+                
+                steps.append(step_info)
+            
+            parsed_legs.append({
+                'start_address': leg.get('start_address', ''),
+                'end_address': leg.get('end_address', ''),
+                'distance': leg.get('distance', {}).get('text', ''),
+                'duration': leg.get('duration', {}).get('text', ''),
+                'steps': steps
+            })
+        
+        return {
+            'summary': route.get('summary', ''),
+            'legs': parsed_legs,
+            'total_distance': legs[0].get('distance', {}).get('text', '') if legs else '',
+            'total_duration': legs[0].get('duration', {}).get('text', '') if legs else ''
+        }
+    
+    def _get_here_route(self, origin: str, destination: str, mode: str = 'transit') -> Dict[str, Any]:
+        """Get route using HERE API (fallback)"""
         try:
             # Geocode origin and destination
             origin_coords = self._geocode(origin)
@@ -57,6 +167,7 @@ class TransportTool:
                 'destination': destination,
                 'mode': mode,
                 'route': route_data,
+                'provider': 'here',
                 'status': 'success'
             }
         except Exception as e:

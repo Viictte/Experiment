@@ -43,6 +43,7 @@ class WeatherTool:
         
         # Prefer WeatherAPI over Open-Meteo
         self.weatherapi_key = os.getenv('WEATHERAPI_KEY')
+        self.google_air_quality_key = os.getenv('GOOGLE_AIR_QUALITY_API_KEY')
         
         if self.weatherapi_key:
             self.provider = 'weatherapi'
@@ -352,6 +353,83 @@ class WeatherTool:
             'data': data,
             'provider': 'open_meteo'
         }
+    
+    def get_air_quality(self, location: str) -> Dict[str, Any]:
+        """
+        Get air quality information for a location using Google Air Quality API.
+        
+        Args:
+            location: Location name (e.g., "Hong Kong Central", "香港中環")
+        
+        Returns:
+            Dict with air quality data including AQI, pollutants, health recommendations
+        """
+        if not self.enabled:
+            return {'error': 'Weather tool is disabled'}
+        
+        if not self.google_air_quality_key:
+            return {'error': 'Google Air Quality API key not configured'}
+        
+        try:
+            # First geocode the location to get coordinates
+            coords = self._geocode(location)
+            if not coords:
+                return {'error': f'Could not geocode location: {location}'}
+            
+            lat, lon = coords
+            
+            # Call Google Air Quality API
+            url = "https://airquality.googleapis.com/v1/currentConditions:lookup"
+            params = {
+                'key': self.google_air_quality_key
+            }
+            
+            payload = {
+                "location": {
+                    "latitude": lat,
+                    "longitude": lon
+                },
+                "extraComputations": [
+                    "HEALTH_RECOMMENDATIONS",
+                    "DOMINANT_POLLUTANT_CONCENTRATION",
+                    "POLLUTANT_CONCENTRATION",
+                    "LOCAL_AQI",
+                    "POLLUTANT_ADDITIONAL_INFO"
+                ],
+                "languageCode": "zh-CN"
+            }
+            
+            response = requests.post(url, params=params, json=payload, timeout=10)
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            # Extract key information
+            indexes = data.get('indexes', [])
+            pollutants = data.get('pollutants', [])
+            health_recommendations = data.get('healthRecommendations', {})
+            
+            # Find the main AQI index (usually the first one)
+            main_aqi = None
+            if indexes:
+                main_aqi = indexes[0]
+            
+            return {
+                'location': location,
+                'latitude': lat,
+                'longitude': lon,
+                'aqi': main_aqi.get('aqi') if main_aqi else None,
+                'aqi_display': main_aqi.get('aqiDisplay') if main_aqi else None,
+                'category': main_aqi.get('category') if main_aqi else None,
+                'dominant_pollutant': main_aqi.get('dominantPollutant') if main_aqi else None,
+                'indexes': indexes,
+                'pollutants': pollutants,
+                'health_recommendations': health_recommendations,
+                'provider': 'google_air_quality',
+                'data': data
+            }
+        except Exception as e:
+            return {'error': str(e)}
 
 _weather_tool = None
 
