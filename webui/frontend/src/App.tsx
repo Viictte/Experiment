@@ -424,6 +424,20 @@ function App() {
                       </div>
                     </div>
 
+                    <div className="border-t pt-3">
+                      <h3 className="text-sm font-semibold mb-2">Upload Documents</h3>
+                      <p className="text-xs text-slate-500 mb-2">Add files or URLs to the knowledge base</p>
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={() => setActiveTab('kb')} 
+                        className="w-full flex items-center justify-center gap-2"
+                      >
+                        <Upload className="w-4 h-4" />
+                        Go to Knowledge Base
+                      </Button>
+                    </div>
+
                     {messages.length > 0 && (
                       <div className="border-t pt-3">
                         <h3 className="text-sm font-semibold mb-2">Current Session</h3>
